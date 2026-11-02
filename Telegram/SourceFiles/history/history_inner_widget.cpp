@@ -3217,6 +3217,13 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 				item,
 				document,
 				controller);
+			if (DocumentOpenWithClickHandler::CanOpenInIina(document)) {
+				_menu->addAction(u"Open in IINA"_q, [=] {
+					DocumentOpenWithClickHandler::OpenInIina(
+						itemId,
+						document);
+				}, &st::menuIconVideoChat);
+			}
 			HistoryView::AddCopyFilename(
 				_menu,
 				document,
@@ -3513,6 +3520,12 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 				_menu->addAction(tr::lng_context_forward_selected(tr::now), [=] {
 					_widget->forwardSelected();
 				}, &st::menuIconForward);
+				_menu->addAction(u"Forward to Saved Messages"_q, [=] {
+					HistoryView::ForwardToSavedMessages(
+						controller->uiShow(),
+						getSelectedItems());
+					_widget->clearSelected();
+				}, &st::menuIconSavedMessages);
 			}
 			if (selectedState.count > 0 && selectedState.canDeleteCount == selectedState.count) {
 				_menu->addAction(tr::lng_context_delete_selected(tr::now), [=] {
@@ -3543,6 +3556,11 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 					_menu->addAction(tr::lng_context_forward_msg(tr::now), [=] {
 						forwardItem(itemId);
 					}, &st::menuIconForward);
+					_menu->addAction(u"Forward to Saved Messages"_q, [=] {
+						HistoryView::ForwardToSavedMessages(
+							controller->uiShow(),
+							MessageIdsList{ itemId });
+					}, &st::menuIconSavedMessages);
 				}
 				if (HistoryView::CanAddOfferToMessage(item)) {
 					_menu->addAction(tr::lng_context_add_offer(tr::now), [=] {
@@ -3830,6 +3848,12 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 				_menu->addAction(tr::lng_context_forward_selected(tr::now), [=] {
 					_widget->forwardSelected();
 				}, &st::menuIconForward);
+				_menu->addAction(u"Forward to Saved Messages"_q, [=] {
+					HistoryView::ForwardToSavedMessages(
+						controller->uiShow(),
+						getSelectedItems());
+					_widget->clearSelected();
+				}, &st::menuIconSavedMessages);
 			}
 			if (selectedState.count > 0 && selectedState.count == selectedState.canDeleteCount) {
 				_menu->addAction(tr::lng_context_delete_selected(tr::now), [=] {
@@ -3861,6 +3885,13 @@ void HistoryInner::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 					_menu->addAction(tr::lng_context_forward_msg(tr::now), [=] {
 						forwardAsGroup(itemId);
 					}, &st::menuIconForward);
+					_menu->addAction(u"Forward to Saved Messages"_q, [=] {
+						if (const auto item = session->data().message(itemId)) {
+							HistoryView::ForwardToSavedMessages(
+								controller->uiShow(),
+								session->data().itemOrItsGroup(item));
+						}
+					}, &st::menuIconSavedMessages);
 				}
 				if (HistoryView::CanAddOfferToMessage(item)) {
 					_menu->addAction(tr::lng_context_add_offer(tr::now), [=] {

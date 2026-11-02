@@ -247,6 +247,13 @@ void PlaybackControls::updatePlaybackSpeed(float64 speed) {
 	resizeEvent(nullptr);
 }
 
+void PlaybackControls::setSpeedFromShortcut(float64 speed) {
+	if (_speedToggle) {
+		_speedToggle->setSpeed(speed);
+	}
+	_delegate->playbackControlsSpeedChanged(speed);
+}
+
 void PlaybackControls::updatePlayback(const Player::TrackState &state) {
 	updatePlayPauseResumeState(state);
 	_playbackProgress->updateState(state, countDownloadedTillPercent(state));

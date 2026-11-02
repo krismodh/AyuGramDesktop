@@ -16,6 +16,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_photo.h"
 #include "main/main_session.h"
 
+// AyuGram includes
+#include "base/platform/base_platform_info.h"
+
+#include <QtCore/QFileInfo>
+#include <QtCore/QProcess>
+
+
 FileClickHandler::FileClickHandler(FullMsgId context)
 : _context(context) {
 }
@@ -180,6 +187,60 @@ void DocumentOpenWithClickHandler::Open(
 			data,
 			DocumentSaveClickHandler::Mode::ToFile);
 	}
+}
+
+bool DocumentOpenWithClickHandler::CanOpenInIina(
+		not_null<DocumentData*> document) {
+	return !document->isNull()
+		&& (document->isVideoFile()
+			|| document->isAnimation()
+			|| document->isAudioFile()
+			|| document->isVideoMessage()
+			|| document->isVoiceMessage());
+}
+
+void DocumentOpenWithClickHandler::OpenInIina(
+		Data::FileOrigin origin,
+		not_null<DocumentData*> document) {
+	if (document->isNull()) {
+		return;
+	}
+	const auto launch = [](const QString &path) {
+		const auto iina = u"/Applications/IINA.app"_q;
+		if (Platform::IsMac() && QFileInfo::exists(iina)) {
+			QProcess::startDetached(
+				u"/usr/bin/open"_q,
+				{ u"-a"_q, iina, path });
+		} else {
+			File::Launch(path);
+		}
+	};
+	const auto launchIfSaved = [=] {
+		if (const auto path = document->filepath(true); !path.isEmpty()) {
+			launch(path);
+		}
+	};
+	document->saveFromDataSilent();
+	if (!document->filepath(true).isEmpty()) {
+		launchIfSaved();
+		return;
+	}
+	DocumentSaveClickHandler::Save(
+		origin,
+		document,
+		DocumentSaveClickHandler::Mode::ToFile,
+		[=] {
+			if (!document->loading()) {
+				launchIfSaved();
+				return;
+			}
+			document->session().downloaderTaskFinished(
+			) | rpl::filter([=] {
+				return !document->loading();
+			}) | rpl::take(1) | rpl::on_next(
+				launchIfSaved,
+				document->session().lifetime());
+		});
 }
 
 void DocumentOpenWithClickHandler::onClickImpl() const {

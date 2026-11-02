@@ -363,6 +363,9 @@ bool ChatFilter::contains(
 			Unexpected("Peer type in ChatFilter::contains.");
 		}
 	}();
+	if (history->peer->isSelf()) {
+		return true;
+	}
 	if (_never.contains(history)) {
 		return false;
 	}

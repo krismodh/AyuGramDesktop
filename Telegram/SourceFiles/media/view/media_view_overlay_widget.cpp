@@ -138,6 +138,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ayu/ayu_settings.h"
 #include "ayu/ayu_state.h"
 #include "ayu/features/streamer_mode/streamer_mode.h"
+#include "history/view/history_view_context_menu.h"
 
 
 namespace Media {
@@ -2306,6 +2307,21 @@ void OverlayWidget::fillContextMenuActions(
 			[=] { showInFolder(); },
 			&st::mediaMenuIconShowInFolder);
 	}
+	if (!story
+		&& _document
+		&& DocumentOpenWithClickHandler::CanOpenInIina(_document)
+		&& !hasCopyMediaRestriction(true)) {
+		addAction(
+			u"Open in IINA  (I)"_q,
+			[=] { openInIina(); },
+			&st::mediaMenuIconOpenInIina);
+	}
+	if (!story && _message && _message->allowsForward()) {
+		addAction(
+			u"Forward to Saved Messages  (S)"_q,
+			[=] { forwardToSavedMessages(); },
+			&st::mediaMenuIconForward);
+	}
 	const auto hasRecognitionSelection = _recognition.hasSelection();
 	if (hasRecognitionSelection) {
 		addAction(
@@ -2816,7 +2832,7 @@ void OverlayWidget::resizeContentByScreenSize() {
 	}
 	const auto usew = _fullScreenVideo ? width() : availableWidth;
 	const auto useh = _fullScreenVideo ? _maxUsedHeight : _availableHeight;
-	if ((_width > usew) || (_height > useh) || _fullScreenVideo) {
+	if ((_width > 0 && _height > 0) || _fullScreenVideo) {
 		const auto use = _fullScreenVideo ? _zoomToScreen : _zoomToDefault;
 		_zoom = kZoomToScreenLevel;
 		if (use >= 0) {
@@ -7448,6 +7464,18 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 			validatePhotoCurrentImage();
 			redisplayContent();
 		}
+	} else if (key == Qt::Key_S && !ctrl && !_stories) {
+		forwardToSavedMessages();
+	} else if (key == Qt::Key_I && !ctrl && !_stories) {
+		openInIina();
+	} else if (key == Qt::Key_Slash && !ctrl && !_stories) {
+		if (_photo || _document) {
+			playbackControlsRotate();
+		}
+	} else if (key == Qt::Key_BracketLeft && !ctrl) {
+		stepPlaybackSpeed(-1);
+	} else if (key == Qt::Key_BracketRight && !ctrl) {
+		stepPlaybackSpeed(1);
 	} else if (key == Qt::Key_V && !_stories) {
 		if (_flip & Qt::Vertical) {
 			_flip &= ~Qt::Vertical;
@@ -8941,6 +8969,61 @@ void OverlayWidget::handleTouchTimer() {
 	_touchRightButton = true;
 }
 
+void OverlayWidget::forwardToSavedMessages() {
+	if (!_message || !_message->allowsForward()) {
+		return;
+	}
+	HistoryView::ForwardToSavedMessages(
+		uiShow(),
+		MessageIdsList{ _message->fullId() });
+}
+
+void OverlayWidget::openInIina() {
+	if (!_document
+		|| !DocumentOpenWithClickHandler::CanOpenInIina(_document)
+		|| hasCopyMediaRestriction(true)) {
+		return;
+	}
+	if (_streamed && !_streamed->instance.player().paused()) {
+		playbackPauseResume();
+	}
+	DocumentOpenWithClickHandler::OpenInIina(fileOrigin(), _document);
+}
+
+void OverlayWidget::stepPlaybackSpeed(int delta) {
+	if (!_streamed
+		|| !_streamed->controls
+		|| _stories
+		|| _speedBoostActive) {
+		return;
+	}
+	constexpr auto kSteps = std::array{
+		0.5, 0.75, 1., 1.25, 1.5, 1.75, 2., 2.5,
+	};
+	const auto current = playbackControlsCurrentSpeed(false);
+	auto speed = current;
+	if (delta > 0) {
+		for (const auto step : kSteps) {
+			if (step > current + 0.01) {
+				speed = step;
+				break;
+			}
+		}
+	} else {
+		for (auto i = int(kSteps.size()); i != 0; --i) {
+			if (kSteps[i - 1] < current - 0.01) {
+				speed = kSteps[i - 1];
+				break;
+			}
+		}
+	}
+	if (Media::EqualSpeeds(speed, current)) {
+		return;
+	}
+	_streamed->controls->setSpeedFromShortcut(speed);
+	uiShow()->showToast(QString::number(speed) + QChar(0x00D7));
+}
+
 void OverlayWidget::updateSaveMsg() {
 	update(_saveMsg);
 }
@@ -8966,6 +9049,16 @@ void OverlayWidget::findCurrent() {
 			? (_index | func::add(*_sharedMediaData->skippedBefore()))
 			: std::nullopt;
 		_fullCount = _sharedMediaData->fullCount();
+		if (!_fullIndex && _index && _fullCount) {
+			if (const auto after = _sharedMediaData->skippedAfter()) {
+				const auto before = *_fullCount
+					- *after
+					- _sharedMediaData->size();
+				if (before >= 0) {
+					_fullIndex = *_index + before;
+				}
+			}
+		}
 	} else if (_userPhotosData) {
 		_index = _photo ? _userPhotosData->indexOf(_photo->id) : std::nullopt;
 		_fullIndex = _userPhotosData->skippedBefore()

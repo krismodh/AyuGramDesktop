@@ -405,6 +405,9 @@ private:
 	void validateCollage();
 
 	[[nodiscard]] Data::FileOrigin fileOrigin() const;
+	void forwardToSavedMessages();
+	void openInIina();
+	void stepPlaybackSpeed(int delta);
 	[[nodiscard]] Data::FileOrigin fileOrigin(const Entity& entity) const;
 
 	void refreshFromLabel();

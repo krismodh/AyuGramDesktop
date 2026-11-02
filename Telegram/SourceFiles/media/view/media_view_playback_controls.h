@@ -73,6 +73,7 @@ public:
 	void setTimestamps(std::vector<TimestampData> timestamps);
 	void setInFullScreen(bool inFullScreen);
 	void updatePlaybackSpeed(float64 speed);
+	void setSpeedFromShortcut(float64 speed);
 	void updateSpeedToggleQuality();
 	[[nodiscard]] bool hasTimestamps() const;
 	[[nodiscard]] std::optional<TimestampData> nextTimestamp(

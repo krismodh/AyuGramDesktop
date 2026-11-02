@@ -42,7 +42,8 @@ uint64 DialogPosFromDate(TimeId date) {
 }
 
 uint64 FixedOnTopDialogPos(int index) {
-	return 0xFFFFFFFFFFFF000FULL - index;
+	return 0xFFFFFFFFFFFF000FULL
+		- ((index == Entry::kSavedMessagesFixOnTopIndex) ? 0 : index);
 }
 
 uint64 PinnedDialogPos(int pinnedIndex) {
@@ -246,6 +247,9 @@ int Entry::lookupPinnedIndex(FilterId filterId) const {
 }
 
 uint64 Entry::computeSortPosition(FilterId filterId) const {
+	if (fixedOnTopIndex() == kSavedMessagesFixOnTopIndex) {
+		return FixedOnTopDialogPos(kSavedMessagesFixOnTopIndex);
+	}
 	const auto index = lookupPinnedIndex(filterId);
 	return index ? PinnedDialogPos(index) : _sortKeyByDate;
 }

@@ -59,6 +59,10 @@ base::unique_qptr<Ui::PopupMenu> FillContextMenu(
 	not_null<ListWidget*> list,
 	const ContextMenuRequest &request);
 
+void ForwardToSavedMessages(
+	std::shared_ptr<Main::SessionShow> show,
+	MessageIdsList ids);
+
 void InsertPollHiddenResultsLabel(not_null<Ui::PopupMenu*> menu);
 void InsertPollVoteRestrictionsLabel(
 	not_null<Ui::PopupMenu*> menu,

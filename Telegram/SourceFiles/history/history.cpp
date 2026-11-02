@@ -3399,7 +3399,11 @@ bool History::useTopPromotion() const {
 }
 
 int History::fixedOnTopIndex() const {
-	return useTopPromotion() ? kTopPromotionFixOnTopIndex : 0;
+	return peer->isSelf()
+		? kSavedMessagesFixOnTopIndex
+		: useTopPromotion()
+		? kTopPromotionFixOnTopIndex
+		: 0;
 }
 
 bool History::trackUnreadMessages() const {

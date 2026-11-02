@@ -102,6 +102,11 @@ public:
 	static void Open(
 		Data::FileOrigin origin,
 		not_null<DocumentData*> document);
+	static void OpenInIina(
+		Data::FileOrigin origin,
+		not_null<DocumentData*> document);
+	[[nodiscard]] static bool CanOpenInIina(
+		not_null<DocumentData*> document);
 
 protected:
 	void onClickImpl() const override;

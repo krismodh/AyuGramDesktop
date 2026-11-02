@@ -1,0 +1,188 @@
+# Builds the patched AyuGram for macOS. Based on upstream Telegram Desktop's
+# own macOS CI (v7.2.9, the version this fork is on).
+#
+# The first run compiles every library from source and can hit GitHub's
+# 6-hour job limit. If the "Libraries" job fails with "not finished yet",
+# open the run and click "Re-run failed jobs": it carries on where it stopped.
+
+name: Build patched AyuGram (macOS)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - patched
+
+concurrency:
+  group: build-mac-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PREPARE_PATH: "Telegram/build/prepare/prepare.py"
+
+jobs:
+
+  libraries:
+    name: Libraries
+    runs-on: macos-latest
+    timeout-minutes: 355
+    outputs:
+      cache-key: ${{ steps.result.outputs.cache-key }}
+
+    steps:
+      - name: Get repository name.
+        run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+
+      - name: Clone.
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          path: ${{ env.REPO_NAME }}
+
+      - name: Cache key.
+        run: |
+          echo "LIBS_PREFIX=${{ runner.os }}-ayu-libs-${{ hashFiles(format('{0}/{1}', env.REPO_NAME, env.PREPARE_PATH)) }}-" >> $GITHUB_ENV
+
+      - name: Restore libraries.
+        id: restore
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            Libraries
+            ThirdParty
+          key: ${{ env.LIBS_PREFIX }}${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ${{ env.LIBS_PREFIX }}
+
+      - name: Check restored libraries.
+        id: check
+        run: |
+          if [ -f Libraries/ayu-libs-done ]; then
+            echo "done=true" >> $GITHUB_OUTPUT
+            echo "All libraries already built, nothing to do."
+          else
+            echo "done=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: First set up.
+        if: steps.check.outputs.done != 'true'
+        run: |
+          sudo chown -R `whoami`:admin /usr/local/share
+
+          brew update
+          brew upgrade || true
+          brew install automake libtool meson nasm ninja pkg-config
+
+          # Disable spotlight.
+          sudo mdutil -a -i off || true
+
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+          sudo sed -i '' '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/ -g//' /opt/homebrew/share/cmake/Modules/Compiler/GNU.cmake || true
+
+      - name: Build libraries.
+        id: prepare
+        if: steps.check.outputs.done != 'true'
+        timeout-minutes: 290
+        continue-on-error: true
+        run: |
+          ./$REPO_NAME/Telegram/build/prepare/mac.sh skip-release silent
+          echo done > Libraries/ayu-libs-done
+
+      - name: Free up some disk space.
+        if: always() && steps.check.outputs.done != 'true'
+        run: find Libraries '(' '(' ! '(' -name '*.a' -o -name '*.h' -o -name '*.hpp' -o -name '*.inc' -o -name '*.cmake' -o -name '*.pc' -o -name 'ayu-libs-done' -o -path '*/include/*' -o -path '*/objects-*' -o -path '*/cache_keys/*' -o -path '*/patches/*' -o -perm +111 ')' -type f ')' -o -empty ')' -delete
+
+      - name: Save libraries.
+        if: always() && steps.check.outputs.done != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            Libraries
+            ThirdParty
+          key: ${{ env.LIBS_PREFIX }}${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Result.
+        id: result
+        if: always()
+        run: |
+          if [ "${{ steps.check.outputs.done }}" = "true" ]; then
+            echo "cache-key=${{ steps.restore.outputs.cache-matched-key }}" >> $GITHUB_OUTPUT
+          elif [ "${{ steps.prepare.outcome }}" = "success" ]; then
+            echo "cache-key=${LIBS_PREFIX}${{ github.run_id }}-${{ github.run_attempt }}" >> $GITHUB_OUTPUT
+          else
+            echo "::error::Libraries stopped before finishing (time limit or an error). Progress was saved. Click 'Re-run failed jobs' to continue. If it fails again within a few minutes, it is a real error: check the 'Build libraries' log."
+            exit 1
+          fi
+
+  app:
+    name: AyuGram app
+    needs: libraries
+    runs-on: macos-latest
+    timeout-minutes: 355
+
+    steps:
+      - name: Get repository name.
+        run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+
+      - name: Clone.
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          path: ${{ env.REPO_NAME }}
+
+      - name: First set up.
+        run: |
+          sudo chown -R `whoami`:admin /usr/local/share
+
+          brew update
+          brew upgrade || true
+          brew install automake libtool meson nasm ninja pkg-config
+
+          sudo mdutil -a -i off || true
+
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+          sudo sed -i '' '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/ -g//' /opt/homebrew/share/cmake/Modules/Compiler/GNU.cmake || true
+
+      - name: Restore libraries.
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            Libraries
+            ThirdParty
+          key: ${{ needs.libraries.outputs.cache-key }}
+          fail-on-cache-miss: true
+
+      - name: Build AyuGram.
+        run: |
+          cd $REPO_NAME/Telegram
+
+          ./configure.sh \
+          -D CMAKE_CONFIGURATION_TYPES=Debug \
+          -D CMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+          -D TDESKTOP_API_ID=2040 \
+          -D TDESKTOP_API_HASH=b18441a1ff607e10a989891a5462e627 \
+          -D DESKTOP_APP_DISABLE_AUTOUPDATE=ON
+
+          cmake --build ../out --config Debug --parallel
+
+      - name: Package.
+        run: |
+          cd $REPO_NAME/out/Debug
+          APP="$(find . -maxdepth 1 -name '*.app' | head -n 1)"
+          if [ -z "$APP" ]; then
+            echo "::error::No .app found in out/Debug"
+            ls -la
+            exit 1
+          fi
+          echo "Found $APP"
+          codesign --force --deep --sign - "$APP"
+          mkdir -p ../../../artifact
+          ditto -c -k --keepParent "$APP" ../../../artifact/AyuGram-patched.zip
+
+      - name: Upload.
+        uses: actions/upload-artifact@v7
+        with:
+          name: AyuGram-patched-macOS
+          path: artifact/AyuGram-patched.zip
+          retention-days: 14

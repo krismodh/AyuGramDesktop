@@ -6101,7 +6101,7 @@ bool Message::displayFastShare() const {
 	if (!item->allowsForward() || IsAnchoredEphemeral(item)) {
 		return false;
 	} else if (peer->isChannel()) {
-		return !peer->isMegagroup();
+		return !peer->isMegagroup() || !hasOutLayout();
 	} else if (const auto user = peer->asUser()) {
 		if (const auto forwarded = item->Get<HistoryMessageForwarded>()) {
 			return !item->out()

@@ -125,6 +125,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ayu/ayu_settings.h"
 #include "ayu/features/forward/ayu_forward.h"
 #include "ayu/ui/context_menu/context_menu.h"
+#include "chat_helpers/share_message_phrase_factory.h"
 
 
 namespace HistoryView {
@@ -501,6 +502,13 @@ void AddDocumentActions(
 			[=] { ShowInFolder(document); },
 			&st::menuIconShowInFolder);
 	}
+	if (item
+		&& !list->hasCopyMediaRestriction(item)
+		&& DocumentOpenWithClickHandler::CanOpenInIina(document)) {
+		menu->addAction(u"Open in IINA"_q, [=] {
+			DocumentOpenWithClickHandler::OpenInIina(contextId, document);
+		}, &st::menuIconVideoChat);
+	}
 	if (document->hasAttachedStickers()) {
 		const auto controller = list->controller();
 		auto callback = [=] {
@@ -627,12 +635,51 @@ bool AddForwardMessageAction(
 	return true;
 }
 
+void AddForwardToSavedAction(
+		not_null<Ui::PopupMenu*> menu,
+		const ContextMenuRequest &request,
+		not_null<ListWidget*> list) {
+	auto ids = MessageIdsList();
+	const auto selection = request.overSelection
+		&& !request.selectedItems.empty();
+	if (selection) {
+		if (!ranges::all_of(request.selectedItems, &SelectedItem::canForward)) {
+			return;
+		}
+		ids = ExtractIdsList(request.selectedItems);
+	} else {
+		const auto item = request.item;
+		if (!item || !item->allowsForward() || IsAnchoredEphemeral(item)) {
+			return;
+		}
+		const auto owner = &item->history()->owner();
+		const auto asGroup = (request.pointState != PointState::GroupPart);
+		ids = asGroup
+			? owner->itemOrItsGroup(item)
+			: MessageIdsList{ item->fullId() };
+	}
+	if (ids.empty()) {
+		return;
+	}
+	const auto show = request.navigation->uiShow();
+	const auto weak = base::make_weak(list);
+	menu->addAction(u"Forward to Saved Messages"_q, [=] {
+		ForwardToSavedMessages(show, ids);
+		if (selection) {
+			if (const auto strong = weak.get()) {
+				strong->cancelSelection();
+			}
+		}
+	}, &st::menuIconSavedMessages);
+}
+
 void AddForwardAction(
 		not_null<Ui::PopupMenu*> menu,
 		const ContextMenuRequest &request,
 		not_null<ListWidget*> list) {
 	AddForwardSelectedAction(menu, request, list);
 	AddForwardMessageAction(menu, request, list);
+	AddForwardToSavedAction(menu, request, list);
 }
 
 void AddOfferAction(
@@ -1981,6 +2028,37 @@ void FillContextMenuItems(
 				list->controller());
 		}
 	}
+}
+
+void ForwardToSavedMessages(
+		std::shared_ptr<Main::SessionShow> show,
+		MessageIdsList ids) {
+	const auto session = &show->session();
+	auto items = session->data().idsToItems(ids);
+	items.erase(ranges::remove_if(items, [](not_null<HistoryItem*> item) {
+		return !item->allowsForward();
+	}), end(items));
+	if (items.empty()) {
+		return;
+	}
+	const auto single = (items.size() == 1);
+	const auto self = session->user();
+	session->api().forwardMessages(
+		Data::ResolvedForwardDraft{ .items = std::move(items) },
+		Api::SendAction(session->data().history(self)),
+		[=] {
+			using namespace ChatHelpers;
+			auto text = rpl::variable<TextWithEntities>(
+				ForwardedMessagePhrase({
+					.toCount = 1,
+					.singleMessage = single,
+					.to1 = self,
+				})).current();
+			show->showToast({
+				.text = std::move(text),
+				.filter = ForwardedToSavedMessagesFilter(session),
+			});
+		});
 }
 
 base::unique_qptr<Ui::PopupMenu> FillContextMenu(
