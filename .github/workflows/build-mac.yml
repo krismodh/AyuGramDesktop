@@ -5,13 +5,13 @@
 # 6-hour job limit. If the "Libraries" job fails with "not finished yet",
 # open the run and click "Re-run failed jobs": it carries on where it stopped.
 
-name: Build patched AyuGram (macOS)
+name: Build patched AyuGram (macOS, full)
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - patched
+      - patched-full
 
 concurrency:
   group: build-mac-${{ github.ref }}
