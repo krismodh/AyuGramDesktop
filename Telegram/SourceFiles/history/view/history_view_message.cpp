@@ -6097,24 +6097,10 @@ bool Message::displayFastShare() const {
 	}
 
 	const auto item = data();
-	const auto peer = item->history()->peer;
 	if (!item->allowsForward() || IsAnchoredEphemeral(item)) {
 		return false;
-	} else if (peer->isChannel()) {
-		return !peer->isMegagroup() || !hasOutLayout();
-	} else if (const auto user = peer->asUser()) {
-		if (const auto forwarded = item->Get<HistoryMessageForwarded>()) {
-			return !item->out()
-				&& forwarded->originalSender
-				&& forwarded->originalSender->isBroadcast()
-				&& !item->showForwardsFromSender(forwarded);
-		} else if (user->isBot() && !item->out()) {
-			if (const auto media = this->media()) {
-				return media->allowsFastShare();
-			}
-		}
 	}
-	return false;
+	return !item->history()->peer->isSelf();
 }
 
 bool Message::displayGoToOriginal() const {
@@ -6334,9 +6320,9 @@ ClickHandlerPtr Message::prepareRightActionLink() const {
 					Window::SectionShow::Way::Forward,
 					savedFromMsgId);
 			} else if (base::IsCtrlPressed()) {
-				FastShareMessageToSelf(controller->uiShow(), item);
-			} else {
 				FastShareMessage(controller, item);
+			} else {
+				FastShareMessageToSelf(controller->uiShow(), item);
 			}
 		}
 	});
