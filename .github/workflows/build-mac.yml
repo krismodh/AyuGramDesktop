@@ -15,7 +15,7 @@ on:
 
 concurrency:
   group: build-mac-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   PREPARE_PATH: "Telegram/build/prepare/prepare.py"
