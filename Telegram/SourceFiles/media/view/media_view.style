@@ -123,6 +123,8 @@ mediaviewSave: icon {{ "mediaview/download", mediaviewControlFg }};
 mediaviewSaveLocked: icon {{ "mediaview/download_locked", mediaviewControlFg }};
 mediaviewShare: icon {{ "mediaview/viewer_share", mediaviewControlFg }};
 mediaviewRotate: icon {{ "mediaview/rotate", mediaviewControlFg }};
+mediaviewOriginalSize: icon {{ "/menu/zoom_in-24x24", mediaviewControlFg }};
+mediaviewFitSize: icon {{ "/menu/zoom_out-24x24", mediaviewControlFg }};
 mediaviewMore: icon {{ "title_menu_dots", mediaviewControlFg }};
 mediaviewRecognize: icon {{ "mediaview/recognize", mediaviewControlFg }};
 mediaviewDraw: icon {{ "mediaview/draw", mediaviewControlFg }};

@@ -1788,6 +1788,13 @@ void OverlayWidget::updateControls() {
 	_saveVisible = computeSaveButtonVisible();
 	_shareVisible = story && story->canShare();
 	_rotateVisible = !_themePreviewShown && !story;
+	_originalSizeVisible = !_themePreviewShown
+		&& !story
+		&& (_photo
+			|| (_document
+				&& (_document->isVideoFile()
+					|| _document->isAnimation()
+					|| _document->isImage())));
 	_drawVisible = _drawButtonEnabled
 		&& !_themePreviewShown
 		&& !story
@@ -1813,6 +1820,14 @@ void OverlayWidget::updateControls() {
 	_rotateNavOver = style::centerrect(_rotateNav, overRect);
 	_rotateNavIcon = style::centerrect(_rotateNav, st::mediaviewRotate);
 	if (_rotateVisible) {
+		++index;
+	}
+	_originalSizeNav = navRect(index);
+	_originalSizeNavOver = style::centerrect(_originalSizeNav, overRect);
+	_originalSizeNavIcon = style::centerrect(
+		_originalSizeNav,
+		st::mediaviewOriginalSize);
+	if (_originalSizeVisible) {
 		++index;
 	}
 	_shareNav = navRect(index);
@@ -2647,6 +2662,9 @@ bool OverlayWidget::updateControlsAnimation(crl::time now) {
 		+ (_over == Over::Save ? _saveNavOver : _saveNavIcon)
 		+ (_over == Over::Share ? _shareNavOver : _shareNavIcon)
 		+ (_over == Over::Rotate ? _rotateNavOver : _rotateNavIcon)
+		+ (_over == Over::OriginalSize
+			? _originalSizeNavOver
+			: _originalSizeNavIcon)
 		+ (_over == Over::More ? _moreNavOver : _moreNavIcon)
 		+ (_over == Over::Draw ? _drawNavOver : _drawNavIcon)
 		+ (_over == Over::Recognize
@@ -2844,7 +2862,8 @@ void OverlayWidget::resizeContentByScreenSize() {
 	}
 	const auto usew = _fullScreenVideo ? width() : availableWidth;
 	const auto useh = _fullScreenVideo ? _maxUsedHeight : _availableHeight;
-	if ((_width > 0 && _height > 0) || _fullScreenVideo) {
+	if (_fullScreenVideo
+		|| (!_originalSizeMode && _width > 0 && _height > 0)) {
 		const auto use = _fullScreenVideo ? _zoomToScreen : _zoomToDefault;
 		_zoom = kZoomToScreenLevel;
 		if (use >= 0) {
@@ -3069,8 +3088,13 @@ void OverlayWidget::assignMediaPointer(DocumentData *document) {
 		_streamedQualityChangeFrame = QImage();
 		_streamedQualityChangeFinished = false;
 		if ((_document = document)) {
-			_quality = _document->initialPlaybackVideoQuality(
-				Core::App().settings().videoQuality());
+			_quality = Media::VideoQuality{
+				.manual = 1u,
+				.height = uint32(std::max(
+					_document->resolveOriginalVideoQuality(),
+					0)),
+				.original = 1u,
+			};
 			_chosenQuality = _document->chooseQuality(_message, _quality);
 			_documentMedia = _document->createMediaView();
 			_videoCover = LookupVideoCover(_document, _message);
@@ -7140,6 +7164,14 @@ void OverlayWidget::paintControls(
 			_rotateNavIcon,
 			st::mediaviewRotate },
 		{
+			Over::OriginalSize,
+			_originalSizeVisible,
+			_originalSizeNavOver,
+			_originalSizeNavIcon,
+			(_originalSizeMode
+				? st::mediaviewFitSize
+				: st::mediaviewOriginalSize) },
+		{
 			Over::More,
 			true,
 			_moreNavOver,
@@ -7480,6 +7512,8 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 		forwardToSavedMessages();
 	} else if (key == Qt::Key_I && !ctrl && !_stories) {
 		openInIina();
+	} else if (key == Qt::Key_O && !ctrl && !_stories) {
+		toggleOriginalSize();
 	} else if (key == Qt::Key_Slash && !ctrl && !_stories) {
 		if (_photo || _document) {
 			playbackControlsRotate();
@@ -8060,6 +8094,7 @@ void OverlayWidget::handleMousePress(
 				|| _over == Over::Save
 				|| _over == Over::Share
 				|| _over == Over::Rotate
+				|| _over == Over::OriginalSize
 				|| _over == Over::Draw
 				|| _over == Over::Recognize
 				|| _over == Over::Icon
@@ -8319,6 +8354,7 @@ void OverlayWidget::updateOverRect(Over state) {
 	case Over::Header: update(_headerNav); break;
 	case Over::More: update(_moreNavOver); break;
 	case Over::Recognize: update(_recognizeNavOver); break;
+	case Over::OriginalSize: update(_originalSizeNavOver); break;
 	}
 }
 
@@ -8461,6 +8497,8 @@ void OverlayWidget::updateOver(QPoint pos) {
 		updateOverState(Over::Draw);
 	} else if (_recognizeVisible && _recognizeNav.contains(pos)) {
 		updateOverState(Over::Recognize);
+	} else if (_originalSizeVisible && _originalSizeNav.contains(pos)) {
+		updateOverState(Over::OriginalSize);
 	} else if (contentShown() && finalContentRect().contains(pos)) {
 		if (_stories) {
 			updateOverState(Over::Video);
@@ -8575,6 +8613,8 @@ void OverlayWidget::handleMouseRelease(
 		draw();
 	} else if (_over == Over::Recognize && _down == Over::Recognize) {
 		recognize();
+	} else if (_over == Over::OriginalSize && _down == Over::OriginalSize) {
+		toggleOriginalSize();
 	} else if (_down == Over::Video) {
 		if (_stories) {
 			_stories->contentPressed(false);
@@ -9006,6 +9046,18 @@ void OverlayWidget::openInIina() {
 		playbackPauseResume();
 	}
 	DocumentOpenWithClickHandler::OpenInIina(fileOrigin(), _document);
+}
+
+void OverlayWidget::toggleOriginalSize() {
+	if (_stories || !_originalSizeVisible) {
+		return;
+	}
+	_originalSizeMode = !_originalSizeMode;
+	if (!_fullScreenVideo) {
+		auto newZoom = _originalSizeMode ? 0 : kZoomToScreenLevel;
+		zoomUpdate(newZoom);
+	}
+	update(_originalSizeNavOver);
 }
 
 void OverlayWidget::stepPlaybackSpeed(int delta) {

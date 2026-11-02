@@ -171,6 +171,7 @@ private:
 		More,
 		Draw,
 		Recognize,
+		OriginalSize,
 		Icon,
 		Video,
 		Caption,
@@ -409,6 +410,7 @@ private:
 	[[nodiscard]] Data::FileOrigin fileOrigin() const;
 	void forwardToSavedMessages();
 	void openInIina();
+	void toggleOriginalSize();
 	void stepPlaybackSpeed(int delta);
 	[[nodiscard]] Data::FileOrigin fileOrigin(const Entity& entity) const;
 
@@ -674,6 +676,7 @@ private:
 	QRect _rightNav, _rightNavOver, _rightNavIcon;
 	QRect _headerNav, _nameNav, _dateNav, _separatorNav;
 	QRect _rotateNav, _rotateNavOver, _rotateNavIcon;
+	QRect _originalSizeNav, _originalSizeNavOver, _originalSizeNavIcon;
 	QRect _shareNav, _shareNavOver, _shareNavIcon;
 	QRect _drawNav, _drawNavOver, _drawNavIcon;
 	QRect _recognizeNav, _recognizeNavOver, _recognizeNavIcon;
@@ -684,6 +687,8 @@ private:
 	bool _saveVisible = false;
 	bool _shareVisible = false;
 	bool _rotateVisible = false;
+	bool _originalSizeVisible = false;
+	bool _originalSizeMode = false;
 	bool _drawButtonEnabled = true;
 	bool _drawVisible = false;
 	bool _recognizeVisible = false;
