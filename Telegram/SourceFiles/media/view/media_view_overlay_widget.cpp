@@ -139,11 +139,21 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ayu/ayu_state.h"
 #include "ayu/features/streamer_mode/streamer_mode.h"
 #include "history/view/history_view_context_menu.h"
+#include "base/options.h"
 
 
 namespace Media {
 namespace View {
 namespace {
+
+base::options::toggle OptionKeepViewerOnFocusLoss({
+	.id = kOptionKeepViewerOnFocusLoss,
+	.name = "Keep media viewer visible when focus moves to another app",
+	.description = "Fullscreen viewer stays on its monitor instead of hiding "
+		"when you click a window of another app.",
+	.defaultValue = true,
+	.scope = base::options::macos,
+});
 
 struct RecognitionId {
 	uint64 sessionUniqueId = 0;
@@ -388,6 +398,8 @@ void RefreshCaptionQuoteCaches(
 }
 
 } // namespace
+
+const char kOptionKeepViewerOnFocusLoss[] = "keep-media-viewer-on-focus-loss";
 
 class OverlayWidget::SponsoredButton : public Ui::RippleButton {
 public:

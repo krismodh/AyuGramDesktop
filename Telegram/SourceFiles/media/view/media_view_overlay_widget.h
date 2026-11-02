@@ -88,6 +88,8 @@ struct ContentLayout;
 
 namespace Media::View {
 
+extern const char kOptionKeepViewerOnFocusLoss[];
+
 class VideoStream;
 class PlaybackSponsored;
 class GroupThumbs;

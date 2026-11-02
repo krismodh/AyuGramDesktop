@@ -16,8 +16,17 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QWindow>
 #include <Cocoa/Cocoa.h>
 
+// AyuGram includes
+#include "base/options.h"
+
+
 namespace Platform {
 namespace {
+
+[[nodiscard]] bool KeepViewerOnFocusLoss() {
+	return base::options::lookup<bool>(
+		"keep-media-viewer-on-focus-loss").value();
+}
 
 using namespace Media::View;
 
@@ -54,6 +63,8 @@ struct MacOverlayWidgetHelper::Data {
 	bool anyOver = false;
 	NSWindow * __weak native = nil;
 	rpl::variable<int> topNotchSkip;
+	id resignActiveObserver = nil;
+	id becomeActiveObserver = nil;
 };
 
 MacOverlayWidgetHelper::MacOverlayWidgetHelper(
@@ -66,9 +77,44 @@ MacOverlayWidgetHelper::MacOverlayWidgetHelper(
 	_data->buttonClose = create(window, Control::Close);
 	_data->buttonMinimize = create(window, Control::Minimize);
 	_data->buttonMaximize = create(window, Control::Maximize);
+
+	// WHY: the fullscreen viewer floats above everything, so when another
+	// app gets focus it drops to a normal level instead of hiding.
+	const auto data = _data.get();
+	const auto center = [NSNotificationCenter defaultCenter];
+	_data->resignActiveObserver = [center
+		addObserverForName:NSApplicationDidResignActiveNotification
+		object:nil
+		queue:nil
+		usingBlock:^(NSNotification *note) {
+			if (KeepViewerOnFocusLoss()
+				&& data->maximized.current()
+				&& data->native) {
+				[data->native setLevel:NSNormalWindowLevel];
+			}
+		}];
+	_data->becomeActiveObserver = [center
+		addObserverForName:NSApplicationDidBecomeActiveNotification
+		object:nil
+		queue:nil
+		usingBlock:^(NSNotification *note) {
+			if (KeepViewerOnFocusLoss()
+				&& data->maximized.current()
+				&& data->native) {
+				[data->native setLevel:NSPopUpMenuWindowLevel];
+			}
+		}];
 }
 
-MacOverlayWidgetHelper::~MacOverlayWidgetHelper() = default;
+MacOverlayWidgetHelper::~MacOverlayWidgetHelper() {
+	const auto center = [NSNotificationCenter defaultCenter];
+	if (_data->resignActiveObserver) {
+		[center removeObserver:_data->resignActiveObserver];
+	}
+	if (_data->becomeActiveObserver) {
+		[center removeObserver:_data->becomeActiveObserver];
+	}
+}
 
 void MacOverlayWidgetHelper::activate(Control control) {
 	const auto fullscreen = (_data->window->windowHandle()->flags() & Qt::FramelessWindowHint);
@@ -80,7 +126,9 @@ void MacOverlayWidgetHelper::activate(Control control) {
 }
 
 void MacOverlayWidgetHelper::beforeShow(bool fullscreen) {
-	_data->window->setAttribute(Qt::WA_MacAlwaysShowToolWindow, !fullscreen);
+	_data->window->setAttribute(
+		Qt::WA_MacAlwaysShowToolWindow,
+		!fullscreen || KeepViewerOnFocusLoss());
 	_data->window->windowHandle()->setFlag(Qt::FramelessWindowHint, fullscreen);
 	updateStyles(fullscreen);
 	clearState();
@@ -126,7 +174,8 @@ void MacOverlayWidgetHelper::updateStyles(bool fullscreen) {
 	}
 
 	const auto window = _data->native;
-	const auto level = !fullscreen
+	const auto level = (!fullscreen
+			|| (KeepViewerOnFocusLoss() && ![NSApp isActive]))
 		? NSNormalWindowLevel
 		: NSPopUpMenuWindowLevel;
 	[window setLevel:level];

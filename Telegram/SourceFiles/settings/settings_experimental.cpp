@@ -67,6 +67,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 // AyuGram includes
 #include "ayu/ui/settings/settings_main.h"
+#include "media/view/media_view_overlay_widget.h"
 #include "settings/settings_builder.h"
 
 
@@ -501,6 +502,7 @@ void SetupExperimental(
 				Media::Player::kOptionDisableAutoplayNext,
 				Window::kOptionExternalMediaViewer,
 				FFmpeg::kOptionFFmpegMultiThread,
+				Media::View::kOptionKeepViewerOnFocusLoss,
 			}
 		},
 		{
