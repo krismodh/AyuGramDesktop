@@ -23,16 +23,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 355
 
-    # Apple Silicon runners are often out of capacity, so try both;
-    # the Intel build also runs on Apple Silicon Macs through Rosetta.
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: macos-latest
             arch: arm64
-          - runner: macos-15-intel
-            arch: intel
 
     env:
       GIT: "https://github.com"
@@ -40,6 +36,10 @@ jobs:
       CMAKE_BUILD_TYPE: "Debug"
       CMAKE_BUILD_PARALLEL_LEVEL: ""
       TDE2E: "51743dfd01dff6179e2d8f7095729caa4e2222e9"
+      # tlottie recipe taken from Telegram/build/prepare/prepare.py.
+      TLOTTIE: "31f1b542f8"
+      PATCHES: "519aaa084608fa6f9a2bfbd1959d133c44d94227"
+      RUST_TOOLCHAIN: "1.96.1"
 
     steps:
       - name: Get repository name.
@@ -129,6 +129,42 @@ jobs:
           cmake -Bbuild . -DCMAKE_INSTALL_PREFIX=$LibrariesPath/local/tde2e -DTD_E2E_ONLY=ON
           cmake --build build
           cmake --install build
+
+      - name: tlottie cache.
+        id: cache-tlottie
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.LibrariesPath }}/local/tlottie
+          key: ${{ runner.OS }}-tlottie-${{ env.TLOTTIE }}-${{ env.PATCHES }}-${{ env.RUST_TOOLCHAIN }}-${{ env.CACHE_KEY }}
+      - name: tlottie.
+        if: steps.cache-tlottie.outputs.cache-hit != 'true'
+        run: |
+          cd $LibrariesPath
+          export RUSTUP_HOME="$LibrariesPath/rustup"
+          export CARGO_HOME="$LibrariesPath/cargo"
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o rustup-init.sh
+          sh rustup-init.sh -y --no-modify-path --profile minimal --default-toolchain "$RUST_TOOLCHAIN"
+          export RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN"
+          export PATH="$CARGO_HOME/bin:$PATH"
+
+          git init desktop-app-patches
+          cd desktop-app-patches
+          git remote add origin $GIT/desktop-app/patches.git
+          git fetch --depth=1 origin $PATCHES
+          git reset --hard FETCH_HEAD
+          cd $LibrariesPath
+
+          git clone $GIT/dkaraush/tlottie.git
+          cd tlottie
+          git checkout $TLOTTIE
+          git apply ../desktop-app-patches/tlottie.patch
+          cargo rustc --lib --release --locked \
+            --features c-api --crate-type staticlib \
+            -- --print native-static-libs
+
+          mkdir -p $LibrariesPath/local/tlottie/lib $LibrariesPath/local/tlottie/include/tlottie
+          cp target/release/libtlottie.a $LibrariesPath/local/tlottie/lib/libtlottie.a
+          cp include/tlottie.h $LibrariesPath/local/tlottie/include/tlottie/tlottie.h
 
       - name: Build AyuGram.
         run: |
