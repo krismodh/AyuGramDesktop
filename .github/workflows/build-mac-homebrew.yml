@@ -19,16 +19,26 @@ concurrency:
 jobs:
 
   macos:
-    name: MacOS
-    runs-on: macos-latest
+    name: MacOS (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 355
+
+    # Apple Silicon runners are often out of capacity, so try both;
+    # the Intel build also runs on Apple Silicon Macs through Rosetta.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: intel
 
     env:
       GIT: "https://github.com"
       CMAKE_GENERATOR: "Ninja"
       CMAKE_BUILD_TYPE: "Debug"
       CMAKE_BUILD_PARALLEL_LEVEL: ""
-      CMAKE_PREFIX_PATH: "/opt/homebrew/opt/ffmpeg@6:/opt/homebrew/opt/openal-soft"
       TDE2E: "51743dfd01dff6179e2d8f7095729caa4e2222e9"
 
     steps:
@@ -48,14 +58,16 @@ jobs:
           brew upgrade || true
           brew install autoconf automake boost cmake libtool ninja pkg-config python $libs
           sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-          sudo sed -i '' '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/ -g//' /opt/homebrew/share/cmake/Modules/Compiler/GNU.cmake || true
+          BREW="$(brew --prefix)"
+          echo "CMAKE_PREFIX_PATH=$BREW/opt/ffmpeg@6:$BREW/opt/openal-soft" >> $GITHUB_ENV
+          sudo sed -i '' '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/ -g//' "$BREW/share/cmake/Modules/Compiler/GNU.cmake" || true
 
           xcodebuild -version > CACHE_KEY.txt
           brew list --versions $libs >> CACHE_KEY.txt
           echo "$GITHUB_WORKSPACE" >> CACHE_KEY.txt
           echo "CACHE_KEY=`md5 -q CACHE_KEY.txt`" >> $GITHUB_ENV
 
-          echo "MACOSX_DEPLOYMENT_TARGET=$(grep 'set(QT_SUPPORTED_MIN_MACOS_VERSION' /opt/homebrew/Cellar/qtbase/*/lib/cmake/Qt6/Qt6ConfigExtras.cmake | sed -E 's/^.*"(.*)"\)$/\1/')" >> $GITHUB_ENV
+          echo "MACOSX_DEPLOYMENT_TARGET=$(grep 'set(QT_SUPPORTED_MIN_MACOS_VERSION' $BREW/Cellar/qtbase/*/lib/cmake/Qt6/Qt6ConfigExtras.cmake | sed -E 's/^.*"(.*)"\)$/\1/')" >> $GITHUB_ENV
           echo "LibrariesPath=`pwd`" >> $GITHUB_ENV
 
           echo "RNNOISE=`curl -sSL --header 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' https://api.github.com/repos/xiph/rnnoise/git/refs/heads/master | jq -r .object.sha`" >> $GITHUB_ENV
@@ -147,6 +159,6 @@ jobs:
       - name: Upload.
         uses: actions/upload-artifact@v7
         with:
-          name: AyuGram-patched-macOS
+          name: AyuGram-patched-macOS-${{ matrix.arch }}
           path: artifact/AyuGram-patched.zip
           retention-days: 14
