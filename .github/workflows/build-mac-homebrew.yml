@@ -11,6 +11,7 @@ on:
   push:
     branches:
       - patched
+      - patched-arm64
 
 concurrency:
   group: build-mac-homebrew-${{ github.ref }}
@@ -31,8 +32,6 @@ jobs:
         include:
           - runner: macos-latest
             arch: arm64
-          - runner: macos-15-intel
-            arch: intel
 
     env:
       GIT: "https://github.com"
