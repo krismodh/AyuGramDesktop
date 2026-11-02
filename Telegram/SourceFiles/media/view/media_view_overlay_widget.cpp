@@ -7505,6 +7505,12 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 		if (!moveToNext(1) && _stories) {
 			storiesClose();
 		}
+	} else if (!_stories
+		&& (key == Qt::Key_Plus || key == Qt::Key_Equal)) {
+		zoomIn();
+	} else if (!_stories
+		&& (key == Qt::Key_Minus || key == Qt::Key_Underscore)) {
+		zoomOut();
 	} else if (ctrl) {
 		if (key == Qt::Key_Plus
 			|| key == Qt::Key_Equal
