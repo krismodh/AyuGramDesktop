@@ -246,11 +246,16 @@ void TopMessagesBox(
 				rpl::single(label),
 				st::settingsButtonNoIcon
 			)->addClickHandler([=] {
-				controller->showPeerHistory(
-					peer,
-					Window::SectionShow::Way::Forward,
-					id);
+				const auto weak = base::make_weak(controller);
 				box->closeBox();
+				crl::on_main([=] {
+					if (const auto strong = weak.get()) {
+						strong->showPeerHistory(
+							peer,
+							Window::SectionShow::Way::Forward,
+							id);
+					}
+				});
 			});
 		}
 		if (sorted.empty() && !state->entries.empty()) {
