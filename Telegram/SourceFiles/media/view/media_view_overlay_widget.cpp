@@ -2347,7 +2347,7 @@ void OverlayWidget::fillContextMenuActions(
 	}
 	if (!story && _message && _message->allowsForward()) {
 		addAction(
-			u"Forward to Saved Messages  (Shift)"_q,
+			u"Forward to Saved Messages  (S / Shift)"_q,
 			[=] { forwardToSavedMessages(); },
 			&st::mediaMenuIconForward);
 	}
@@ -7468,6 +7468,8 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 				stepPlaybackSpeed(1);
 			} else if (key == Qt::Key_I && !ctrl) {
 				openInIina();
+			} else if (key == Qt::Key_S && !ctrl && !_stories) {
+				forwardToSavedMessages();
 			} else if (ctrl) {
 			} else if (key == Qt::Key_0) {
 				activateControls();
@@ -7525,6 +7527,8 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 		}
 	} else if (key == Qt::Key_I && !ctrl && !_stories) {
 		openInIina();
+	} else if (key == Qt::Key_S && !ctrl && !_stories) {
+		forwardToSavedMessages();
 	} else if (key == Qt::Key_O && !ctrl && !_stories) {
 		toggleOriginalSize();
 	} else if (key == Qt::Key_Slash && !ctrl && !_stories) {
