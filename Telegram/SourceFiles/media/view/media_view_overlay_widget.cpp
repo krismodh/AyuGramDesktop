@@ -2347,7 +2347,7 @@ void OverlayWidget::fillContextMenuActions(
 	}
 	if (!story && _message && _message->allowsForward()) {
 		addAction(
-			u"Forward to Saved Messages  (S / Shift)"_q,
+			u"Forward to Saved Messages  (' or S)"_q,
 			[=] { forwardToSavedMessages(); },
 			&st::mediaMenuIconForward);
 	}
@@ -7386,9 +7386,6 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 		return;
 	}
 	_processingKeyPress = true;
-	if (!e->isAutoRepeat()) {
-		_shiftAlone = (e->key() == Qt::Key_Shift);
-	}
 	const auto guard = gsl::finally([&] { _processingKeyPress = false; });
 	const auto key = LayoutIndependentKey(e);
 	const auto modifiers = e->modifiers();
@@ -7468,7 +7465,9 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 				stepPlaybackSpeed(1);
 			} else if (key == Qt::Key_I && !ctrl) {
 				openInIina();
-			} else if (key == Qt::Key_S && !ctrl && !_stories) {
+			} else if ((key == Qt::Key_S || key == Qt::Key_Apostrophe)
+				&& !ctrl
+				&& !_stories) {
 				forwardToSavedMessages();
 			} else if (ctrl) {
 			} else if (key == Qt::Key_0) {
@@ -7527,7 +7526,9 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 		}
 	} else if (key == Qt::Key_I && !ctrl && !_stories) {
 		openInIina();
-	} else if (key == Qt::Key_S && !ctrl && !_stories) {
+	} else if ((key == Qt::Key_S || key == Qt::Key_Apostrophe)
+		&& !ctrl
+		&& !_stories) {
 		forwardToSavedMessages();
 	} else if (key == Qt::Key_O && !ctrl && !_stories) {
 		toggleOriginalSize();
@@ -7578,10 +7579,6 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 
 void OverlayWidget::handleKeyRelease(not_null<QKeyEvent*> e) {
 	if (e->isAutoRepeat()) {
-		return;
-	}
-	if (e->key() == Qt::Key_Shift && base::take(_shiftAlone) && !_stories) {
-		forwardToSavedMessages();
 		return;
 	}
 	if (e->key() == Qt::Key_Space && _streamed && !_stories) {
