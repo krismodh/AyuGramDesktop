@@ -17,6 +17,7 @@
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "mainwindow.h"
+#include "settings.h"
 #include "settings/settings_common.h"
 #include "ui/layers/generic_box.h"
 #include "ui/layers/standalone_layer_stack.h"
@@ -32,7 +33,12 @@
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
 
+#include <QtCore/QDataStream>
+#include <QtCore/QDir>
+#include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QLocale>
+#include <QtCore/QSaveFile>
 
 namespace {
 
@@ -43,6 +49,7 @@ constexpr auto kShownLimit = 100;
 constexpr auto kPreviewLength = 90;
 constexpr auto kRefreshEvery = 1000;
 constexpr auto kCachedScans = 5;
+constexpr auto kFileMagic = qint32(0x544D5331);
 constexpr auto kLimits = std::array{
 	500, 1000, 2000, 5000, 10000, 25000, 50000, 100000, 0,
 };
@@ -85,7 +92,15 @@ struct Results {
 };
 
 struct State {
+	~State() {
+		if (save) {
+			save();
+		}
+	}
+
 	std::shared_ptr<Results> results;
+	Fn<void()> save;
+	bool dirty = false;
 	int sinceRefresh = 0;
 	int page = 0;
 	bool scrollToTop = false;
@@ -136,6 +151,133 @@ void RememberResults(CacheKey key, std::shared_ptr<Results> results) {
 	if (int(cache.size()) > kCachedScans) {
 		cache.resize(kCachedScans);
 	}
+}
+
+[[nodiscard]] QString CachePath(
+		not_null<Main::Session*> session,
+		CacheKey key) {
+	return cWorkingDir()
+		+ u"tdata/ayu/top_messages/"_q
+		+ QString::number(session->userId().bare)
+		+ u"_"_q
+		+ QString::number(key.first.value)
+		+ u"_"_q
+		+ QString::number(key.second.bare)
+		+ u".bin"_q;
+}
+
+void SaveResults(const QString &path, const Results &results) {
+	QDir().mkpath(QFileInfo(path).absolutePath());
+	auto file = QSaveFile(path);
+	if (!file.open(QIODevice::WriteOnly)) {
+		return;
+	}
+	auto stream = QDataStream(&file);
+	stream.setVersion(QDataStream::Qt_5_15);
+	stream
+		<< kFileMagic
+		<< qint32(results.sort)
+		<< results.mediaOnly
+		<< qint32(results.skip)
+		<< qint32(results.limit)
+		<< qint64(results.offsetId.bare)
+		<< qint32(results.scanned)
+		<< results.reachedStart
+		<< qint32(results.entries.size());
+	for (const auto &entry : results.entries) {
+		stream
+			<< qint64(entry.id.bare)
+			<< qint64(entry.topicRoot.bare)
+			<< qint32(entry.date)
+			<< quint64(entry.from.value)
+			<< entry.text
+			<< qint32(entry.reactions)
+			<< qint32(entry.replies)
+			<< qint32(entry.forwards)
+			<< qint32(entry.views)
+			<< entry.media;
+	}
+	if (stream.status() == QDataStream::Ok) {
+		file.commit();
+	}
+}
+
+[[nodiscard]] std::shared_ptr<Results> LoadResults(const QString &path) {
+	auto file = QFile(path);
+	if (!file.open(QIODevice::ReadOnly)) {
+		return nullptr;
+	}
+	auto stream = QDataStream(&file);
+	stream.setVersion(QDataStream::Qt_5_15);
+	auto magic = qint32();
+	auto sort = qint32();
+	auto skip = qint32();
+	auto limit = qint32();
+	auto offsetId = qint64();
+	auto scanned = qint32();
+	auto count = qint32();
+	auto result = std::make_shared<Results>();
+	stream >> magic;
+	if (magic != kFileMagic) {
+		return nullptr;
+	}
+	stream
+		>> sort
+		>> result->mediaOnly
+		>> skip
+		>> limit
+		>> offsetId
+		>> scanned
+		>> result->reachedStart
+		>> count;
+	if (stream.status() != QDataStream::Ok
+		|| sort < 0
+		|| sort > int(SortBy::Views)
+		|| count < 0) {
+		return nullptr;
+	}
+	result->sort = SortBy(sort);
+	result->skip = skip;
+	result->limit = limit;
+	result->offsetId = MsgId(offsetId);
+	result->scanned = scanned;
+	result->hasScan = true;
+	result->entries.reserve(count);
+	for (auto i = 0; i != count; ++i) {
+		auto entry = Entry();
+		auto id = qint64();
+		auto topicRoot = qint64();
+		auto date = qint32();
+		auto from = quint64();
+		auto reactions = qint32();
+		auto replies = qint32();
+		auto forwards = qint32();
+		auto views = qint32();
+		stream
+			>> id
+			>> topicRoot
+			>> date
+			>> from
+			>> entry.text
+			>> reactions
+			>> replies
+			>> forwards
+			>> views
+			>> entry.media;
+		if (stream.status() != QDataStream::Ok) {
+			return nullptr;
+		}
+		entry.id = MsgId(id);
+		entry.topicRoot = MsgId(topicRoot);
+		entry.date = TimeId(date);
+		entry.from = PeerId(PeerIdHelper(from));
+		entry.reactions = reactions;
+		entry.replies = replies;
+		entry.forwards = forwards;
+		entry.views = views;
+		result->entries.push_back(std::move(entry));
+	}
+	return result;
 }
 
 [[nodiscard]] QString FormatNumber(int value) {
@@ -239,10 +381,21 @@ void TopMessagesBox(
 	const auto state = box->lifetime().make_state<State>();
 	const auto key = CacheKey(peer->id, topicRootId);
 	const auto forum = peer->isForum();
+	const auto path = CachePath(session, key);
 	state->results = CachedResults(key);
 	if (!state->results) {
-		state->results = std::make_shared<Results>();
+		state->results = LoadResults(path);
+		if (state->results) {
+			RememberResults(key, state->results);
+		} else {
+			state->results = std::make_shared<Results>();
+		}
 	}
+	state->save = [=] {
+		if (base::take(state->dirty) && state->results->hasScan) {
+			SaveResults(path, *state->results);
+		}
+	};
 	const auto initial = state->results;
 
 	auto boxTitle = u"Top messages: "_q + peer->name();
@@ -516,6 +669,8 @@ void TopMessagesBox(
 			session->api().request(base::take(state->requestId)).cancel();
 		}
 		state->buttonText = u"Scan"_q;
+		state->dirty = true;
+		state->save();
 		updateStatus();
 		if (!suffix.isEmpty()) {
 			state->status = state->status.current() + u" "_q + suffix;
@@ -540,6 +695,7 @@ void TopMessagesBox(
 		});
 		data->scanned += count;
 		state->sinceRefresh += count;
+		state->dirty = true;
 		if (!count) {
 			data->reachedStart = true;
 			finish(QString());
@@ -648,6 +804,7 @@ void TopMessagesBox(
 	tabs->sectionActivated(
 	) | rpl::on_next([=](int index) {
 		state->results->sort = SortBy(index);
+		state->dirty = true;
 		state->page = 0;
 		(*refresh)();
 	}, tabs->lifetime());
@@ -655,6 +812,7 @@ void TopMessagesBox(
 	mediaOnly->toggledChanges(
 	) | rpl::on_next([=](bool value) {
 		state->results->mediaOnly = value;
+		state->dirty = true;
 		state->page = 0;
 		(*refresh)();
 	}, mediaOnly->lifetime());
