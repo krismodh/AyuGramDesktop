@@ -87,10 +87,13 @@ struct Results {
 struct State {
 	std::shared_ptr<Results> results;
 	int sinceRefresh = 0;
+	int page = 0;
+	bool scrollToTop = false;
 	bool scanning = false;
 	mtpRequestId requestId = 0;
 	base::Timer timer;
 	Fn<void()> requestNext;
+	Fn<void()> refresh;
 	rpl::variable<QString> status;
 	rpl::variable<QString> buttonText = u"Scan"_q;
 };
@@ -361,7 +364,15 @@ void TopMessagesBox(
 		controller->showPeerHistory(peer, params.way, id);
 	};
 
-	const auto refresh = [=] {
+	const auto refresh = &state->refresh;
+	const auto showPage = [=](int page) {
+		crl::on_main(box, [=] {
+			state->page = page;
+			state->scrollToTop = true;
+			(*refresh)();
+		});
+	};
+	*refresh = [=] {
 		results->clear();
 		const auto data = state->results;
 		auto sorted = std::vector<const Entry*>();
@@ -378,10 +389,31 @@ void TopMessagesBox(
 			const auto mb = Metric(*b, sort);
 			return (ma != mb) ? (ma > mb) : (a->date > b->date);
 		});
-		if (int(sorted.size()) > kShownLimit) {
-			sorted.resize(kShownLimit);
-		}
-		for (const auto entry : sorted) {
+		const auto total = int(sorted.size());
+		const auto pages = std::max((total + kShownLimit - 1) / kShownLimit, 1);
+		state->page = std::clamp(state->page, 0, pages - 1);
+		const auto first = state->page * kShownLimit;
+		const auto till = std::min(first + kShownLimit, total);
+		const auto header = (total > 0)
+			? results->add(
+				object_ptr<Ui::FlatLabel>(
+					results,
+					rpl::single(u"Showing "_q
+						+ FormatNumber(first + 1)
+						+ QString::fromUtf8("\xE2\x80\x93")
+						+ FormatNumber(till)
+						+ u" of "_q
+						+ FormatNumber(total)
+						+ u" results (page "_q
+						+ FormatNumber(state->page + 1)
+						+ u" of "_q
+						+ FormatNumber(pages)
+						+ u")."_q),
+					st::boxDividerLabel),
+				st::boxRowPadding)
+			: nullptr;
+		for (auto index = first; index != till; ++index) {
+			const auto entry = sorted[index];
 			const auto from = entry->from
 				? session->data().peerLoaded(entry->from)
 				: nullptr;
@@ -391,9 +423,10 @@ void TopMessagesBox(
 				: entry->media
 				? u"Media"_q
 				: u"Message"_q;
-			const auto text = name.isEmpty()
-				? preview
-				: (name + u": "_q + preview);
+			const auto text = u"#"_q
+				+ FormatNumber(index + 1)
+				+ u"  "_q
+				+ (name.isEmpty() ? preview : (name + u": "_q + preview));
 			const auto date = QLocale().toString(
 				base::unixtime::parse(entry->date).date(),
 				QLocale::ShortFormat);
@@ -413,6 +446,36 @@ void TopMessagesBox(
 				});
 			});
 		}
+		if (pages > 1) {
+			Ui::AddSkip(results);
+			const auto page = state->page;
+			if (page + 1 < pages) {
+				Settings::AddButtonWithLabel(
+					results,
+					rpl::single(u"Next page"_q),
+					rpl::single(FormatNumber(page + 2)
+						+ u" of "_q
+						+ FormatNumber(pages)),
+					st::settingsButtonNoIcon
+				)->addClickHandler([=] { showPage(page + 1); });
+			}
+			if (page > 0) {
+				Settings::AddButtonWithLabel(
+					results,
+					rpl::single(u"Previous page"_q),
+					rpl::single(FormatNumber(page)
+						+ u" of "_q
+						+ FormatNumber(pages)),
+					st::settingsButtonNoIcon
+				)->addClickHandler([=] { showPage(page - 1); });
+				Settings::AddButtonWithLabel(
+					results,
+					rpl::single(u"First page"_q),
+					rpl::single(QString()),
+					st::settingsButtonNoIcon
+				)->addClickHandler([=] { showPage(0); });
+			}
+		}
 		if (sorted.empty() && !data->entries.empty()) {
 			results->add(
 				object_ptr<Ui::FlatLabel>(
@@ -422,6 +485,10 @@ void TopMessagesBox(
 				st::boxRowPadding);
 		}
 		results->resizeToWidth(content->width());
+		if (header && state->scrollToTop) {
+			state->scrollToTop = false;
+			box->scrollToWidget(header);
+		}
 	};
 
 	const auto updateStatus = [=] {
@@ -453,7 +520,7 @@ void TopMessagesBox(
 		if (!suffix.isEmpty()) {
 			state->status = state->status.current() + u" "_q + suffix;
 		}
-		refresh();
+		(*refresh)();
 	};
 
 	const auto done = [=](const MTPmessages_Messages &result) {
@@ -484,7 +551,7 @@ void TopMessagesBox(
 		updateStatus();
 		if (state->sinceRefresh >= kRefreshEvery) {
 			state->sinceRefresh = 0;
-			refresh();
+			(*refresh)();
 		}
 		state->timer.callOnce(kRequestDelay);
 	};
@@ -570,30 +637,33 @@ void TopMessagesBox(
 		state->results = fresh;
 		RememberResults(key, fresh);
 		state->sinceRefresh = 0;
+		state->page = 0;
 		state->scanning = true;
 		state->buttonText = u"Stop"_q;
 		updateStatus();
-		refresh();
+		(*refresh)();
 		state->requestNext();
 	};
 
 	tabs->sectionActivated(
 	) | rpl::on_next([=](int index) {
 		state->results->sort = SortBy(index);
-		refresh();
+		state->page = 0;
+		(*refresh)();
 	}, tabs->lifetime());
 
 	mediaOnly->toggledChanges(
 	) | rpl::on_next([=](bool value) {
 		state->results->mediaOnly = value;
-		refresh();
+		state->page = 0;
+		(*refresh)();
 	}, mediaOnly->lifetime());
 
 	if (initial->hasScan) {
 		updateStatus();
 		state->status = state->status.current()
 			+ u" Showing your last scan, press Scan to rescan."_q;
-		refresh();
+		(*refresh)();
 	} else {
 		state->status = u"Pick a range and what to sort by, then press Scan."_q;
 	}
