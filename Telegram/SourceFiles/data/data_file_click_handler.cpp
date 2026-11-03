@@ -266,7 +266,11 @@ void DocumentOpenWithClickHandler::OpenListInIina(
 			return;
 		}
 		const auto iina = u"/Applications/IINA.app"_q;
-		if (Platform::IsMac() && QFileInfo::exists(iina)) {
+		const auto cli = iina + u"/Contents/MacOS/iina-cli"_q;
+		if (Platform::IsMac() && QFileInfo::exists(cli)) {
+			// open -a hands files to IINA in no fixed order, iina-cli plays the first.
+			QProcess::startDetached(cli, paths);
+		} else if (Platform::IsMac() && QFileInfo::exists(iina)) {
 			QProcess::startDetached(
 				u"/usr/bin/open"_q,
 				QStringList{ u"-a"_q, iina } + paths);
