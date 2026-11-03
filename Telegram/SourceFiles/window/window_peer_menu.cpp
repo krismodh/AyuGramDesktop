@@ -1933,6 +1933,7 @@ void Filler::fillHistoryActions() {
 	addCreateTopic();
 	addInfo();
 	AyuUi::AddJumpToBeginningAction(_peer, _thread, _controller, _addAction);
+	AyuUi::AddTopMessagesAction(_peer, _controller, _addAction);
 	AyuUi::AddOpenChannelAction(_peer, _controller, _addAction);
 	addViewAsTopics();
 	addManageChat();

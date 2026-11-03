@@ -17,6 +17,8 @@
 #include "ayu/features/forward/ayu_forward.h"
 #include "ayu/features/forward/ayu_forward_rich.h"
 #include "ayu/ui/context_menu/menu_item_subtext.h"
+#include "ayu/ui/boxes/top_messages_box.h"
+#include "ui/layers/generic_box.h"
 #include "ayu/ui/message_history/history_section.h"
 #include "ayu/ui/settings/filters/edit_filter.h"
 #include "ayu/ui/settings/filters/settings_filters_list.h"
@@ -322,6 +324,20 @@ void AddAyuGramActions(PeerData *peerData,
 			}
 		},
 	});
+}
+
+void AddTopMessagesAction(PeerData *peerData,
+						  not_null<Window::SessionController*> sessionController,
+						  const Window::PeerMenuCallback &addCallback) {
+	if (!peerData) {
+		return;
+	}
+	const auto peer = not_null<PeerData*>(peerData);
+	const auto controller = sessionController;
+	addCallback(u"Top messages"_q, [=]
+	{
+		controller->show(Box(TopMessagesBox, controller, peer));
+	}, &st::menuIconStats);
 }
 
 void AddJumpToBeginningAction(PeerData *peerData,
