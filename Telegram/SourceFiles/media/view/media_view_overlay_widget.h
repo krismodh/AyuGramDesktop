@@ -689,6 +689,7 @@ private:
 	bool _rotateVisible = false;
 	bool _originalSizeVisible = false;
 	bool _originalSizeMode = false;
+	bool _shiftAlone = false;
 	bool _drawButtonEnabled = true;
 	bool _drawVisible = false;
 	bool _recognizeVisible = false;
