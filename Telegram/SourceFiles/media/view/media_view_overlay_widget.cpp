@@ -140,6 +140,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ayu/features/streamer_mode/streamer_mode.h"
 #include "history/view/history_view_context_menu.h"
 #include "base/options.h"
+#include "data/data_groups.h"
+#include "data/data_media_types.h"
 
 
 namespace Media {
@@ -2804,11 +2806,15 @@ void OverlayWidget::recountSkipTop() {
 			- 2 * st::mediaviewCaptionPadding.bottom())
 		: height();
 	const auto skipHeightBottom = (height() - bottom);
-	_skipTop = _minUsedTop + std::min(
-		std::max(
+	_skipTop = _minUsedTop + (_originalSizeMode
+		? std::min(
+			std::max(
+				st::mediaviewCaptionMargin.height(),
+				height() - _height - skipHeightBottom),
+			skipHeightBottom)
+		: std::min(
 			st::mediaviewCaptionMargin.height(),
-			height() - _height - skipHeightBottom),
-		skipHeightBottom);
+			skipHeightBottom));
 	_availableHeight = height() - skipHeightBottom - _skipTop;
 	if (_fullScreenVideo && skipHeightBottom > 0 && _width > 0) {
 		const auto h = width() * _height / _width;
@@ -7453,6 +7459,14 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 		} else if (_fullScreenVideo) {
 			if (key == Qt::Key_Escape) {
 				playbackToggleFullScreen();
+			} else if (key == Qt::Key_BracketLeft && !ctrl) {
+				stepPlaybackSpeed(-1);
+			} else if (key == Qt::Key_BracketRight && !ctrl) {
+				stepPlaybackSpeed(1);
+			} else if (key == Qt::Key_S && !ctrl) {
+				forwardToSavedMessages();
+			} else if (key == Qt::Key_I && !ctrl) {
+				openInIina();
 			} else if (ctrl) {
 			} else if (key == Qt::Key_0) {
 				activateControls();
@@ -9045,7 +9059,35 @@ void OverlayWidget::openInIina() {
 	if (_streamed && !_streamed->instance.player().paused()) {
 		playbackPauseResume();
 	}
-	DocumentOpenWithClickHandler::OpenInIina(fileOrigin(), _document);
+	using Entry = std::pair<FullMsgId, not_null<DocumentData*>>;
+	auto files = std::vector<Entry>();
+	const auto group = _message
+		? _message->history()->owner().groups().find(_message)
+		: nullptr;
+	if (group) {
+		const auto &items = group->items;
+		const auto current = ranges::find(items, not_null<HistoryItem*>(_message));
+		const auto start = (current != end(items))
+			? int(current - begin(items))
+			: 0;
+		for (auto i = 0; i != int(items.size()); ++i) {
+			const auto item = items[(start + i) % items.size()];
+			const auto media = item->media();
+			const auto document = media ? media->document() : nullptr;
+			if (document
+				&& !item->forbidsSaving()
+				&& DocumentOpenWithClickHandler::CanOpenInIina(document)) {
+				files.emplace_back(
+					item->fullId(),
+					not_null<DocumentData*>(document));
+			}
+		}
+	}
+	if (files.size() > 1) {
+		DocumentOpenWithClickHandler::OpenListInIina(std::move(files));
+	} else {
+		DocumentOpenWithClickHandler::OpenInIina(fileOrigin(), _document);
+	}
 }
 
 void OverlayWidget::toggleOriginalSize() {
@@ -9054,10 +9096,12 @@ void OverlayWidget::toggleOriginalSize() {
 	}
 	_originalSizeMode = !_originalSizeMode;
 	if (!_fullScreenVideo) {
-		auto newZoom = _originalSizeMode ? 0 : kZoomToScreenLevel;
-		zoomUpdate(newZoom);
+		resizeContentByScreenSize();
+		if (videoShown()) {
+			applyVideoSize();
+		}
 	}
-	update(_originalSizeNavOver);
+	update();
 }
 
 void OverlayWidget::stepPlaybackSpeed(int delta) {
@@ -9091,7 +9135,7 @@ void OverlayWidget::stepPlaybackSpeed(int delta) {
 		return;
 	}
 	_streamed->controls->setSpeedFromShortcut(speed);
-	uiShow()->showToast(QString::number(speed) + QChar(0x00D7));
+	activateControls();
 }
 
 void OverlayWidget::updateSaveMsg() {

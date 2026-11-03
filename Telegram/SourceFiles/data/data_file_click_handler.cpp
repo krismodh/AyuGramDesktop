@@ -243,6 +243,78 @@ void DocumentOpenWithClickHandler::OpenInIina(
 		});
 }
 
+void DocumentOpenWithClickHandler::OpenListInIina(
+		std::vector<std::pair<FullMsgId, not_null<DocumentData*>>> files) {
+	files.erase(ranges::remove_if(files, [](const auto &entry) {
+		return entry.second->isNull();
+	}), end(files));
+	if (files.empty()) {
+		return;
+	} else if (files.size() == 1) {
+		OpenInIina(files.front().first, files.front().second);
+		return;
+	}
+	const auto launch = [=] {
+		auto paths = QStringList();
+		for (const auto &entry : files) {
+			const auto path = entry.second->filepath(true);
+			if (!path.isEmpty()) {
+				paths.push_back(path);
+			}
+		}
+		if (paths.isEmpty()) {
+			return;
+		}
+		const auto iina = u"/Applications/IINA.app"_q;
+		if (Platform::IsMac() && QFileInfo::exists(iina)) {
+			QProcess::startDetached(
+				u"/usr/bin/open"_q,
+				QStringList{ u"-a"_q, iina } + paths);
+		} else {
+			File::Launch(paths.front());
+		}
+	};
+	const auto session = &files.front().second->session();
+	const auto anyLoading = [=] {
+		return ranges::any_of(files, [](const auto &entry) {
+			return entry.second->loading();
+		});
+	};
+	const auto waitAndLaunch = [=] {
+		if (!anyLoading()) {
+			launch();
+			return;
+		}
+		session->downloaderTaskFinished(
+		) | rpl::filter([=] {
+			return !anyLoading();
+		}) | rpl::take(1) | rpl::on_next(launch, session->lifetime());
+	};
+	auto missing = std::vector<std::pair<FullMsgId, not_null<DocumentData*>>>();
+	for (const auto &entry : files) {
+		entry.second->saveFromDataSilent();
+		if (entry.second->filepath(true).isEmpty()) {
+			missing.push_back(entry);
+		}
+	}
+	if (missing.empty()) {
+		launch();
+		return;
+	}
+	const auto pending = std::make_shared<int>(int(missing.size()));
+	for (const auto &entry : missing) {
+		DocumentSaveClickHandler::Save(
+			entry.first,
+			entry.second,
+			DocumentSaveClickHandler::Mode::ToFile,
+			[=] {
+				if (--*pending == 0) {
+					waitAndLaunch();
+				}
+			});
+	}
+}
+
 void DocumentOpenWithClickHandler::onClickImpl() const {
 	Open(context(), document());
 }

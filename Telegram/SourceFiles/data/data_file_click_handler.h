@@ -107,6 +107,8 @@ public:
 		not_null<DocumentData*> document);
 	[[nodiscard]] static bool CanOpenInIina(
 		not_null<DocumentData*> document);
+	static void OpenListInIina(
+		std::vector<std::pair<FullMsgId, not_null<DocumentData*>>> files);
 
 protected:
 	void onClickImpl() const override;
