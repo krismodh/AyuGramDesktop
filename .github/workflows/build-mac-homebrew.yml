@@ -12,10 +12,6 @@ on:
     branches:
       - patched
 
-concurrency:
-  group: build-mac-homebrew-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
 
   macos:
