@@ -33,7 +33,8 @@ void AddJumpToBeginningAction(PeerData *peerData,
 
 void AddTopMessagesAction(PeerData *peerData,
 						  not_null<Window::SessionController*> sessionController,
-						  const Window::PeerMenuCallback &addCallback);
+						  const Window::PeerMenuCallback &addCallback,
+						  MsgId topicRootId = 0);
 
 void AddShadowBanAction(PeerData *peerData,
 						const Window::PeerMenuCallback &addCallback);

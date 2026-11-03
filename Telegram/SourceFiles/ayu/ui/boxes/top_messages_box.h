@@ -6,17 +6,15 @@
 // Copyright @Radolyn, 2026
 #pragma once
 
-class PeerData;
+#include "data/data_msg_id.h"
 
-namespace Ui {
-class GenericBox;
-} // namespace Ui
+class PeerData;
 
 namespace Window {
 class SessionController;
 } // namespace Window
 
-void TopMessagesBox(
-	not_null<Ui::GenericBox*> box,
+void ShowTopMessagesWindow(
 	not_null<Window::SessionController*> controller,
-	not_null<PeerData*> peer);
+	not_null<PeerData*> peer,
+	MsgId topicRootId = 0);

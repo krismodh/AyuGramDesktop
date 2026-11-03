@@ -1861,6 +1861,7 @@ void Filler::fillChatsListActions() {
 	addCreateTopic();
 	addInfo();
 	addViewAsMessages();
+	AyuUi::AddTopMessagesAction(_peer, _controller, _addAction);
 	const auto &all = _peer->forum()->topicsList()->indexed()->all();
 	if (all.size() > kTopicsSearchMinCount) {
 		addSearchTopics();
@@ -1991,6 +1992,7 @@ void Filler::fillRepliesActions() {
 	if (_topic) {
 		addInfo();
 		AyuUi::AddJumpToBeginningAction(_peer, _thread, _controller, _addAction);
+		AyuUi::AddTopMessagesAction(_peer, _controller, _addAction, _topic->rootId());
 		addManageTopic();
 	}
 	addBoostChat();

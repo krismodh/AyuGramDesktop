@@ -328,15 +328,16 @@ void AddAyuGramActions(PeerData *peerData,
 
 void AddTopMessagesAction(PeerData *peerData,
 						  not_null<Window::SessionController*> sessionController,
-						  const Window::PeerMenuCallback &addCallback) {
+						  const Window::PeerMenuCallback &addCallback,
+						  MsgId topicRootId) {
 	if (!peerData) {
 		return;
 	}
 	const auto peer = not_null<PeerData*>(peerData);
 	const auto controller = sessionController;
-	addCallback(u"Top messages"_q, [=]
+	addCallback(topicRootId ? u"Top messages in topic"_q : u"Top messages"_q, [=]
 	{
-		controller->show(Box(TopMessagesBox, controller, peer));
+		ShowTopMessagesWindow(controller, peer, topicRootId);
 	}, &st::menuIconStats);
 }
 

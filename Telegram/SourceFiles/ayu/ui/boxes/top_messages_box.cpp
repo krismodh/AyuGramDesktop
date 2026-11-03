@@ -7,20 +7,26 @@
 #include "ayu/ui/boxes/top_messages_box.h"
 
 #include "apiwrap.h"
+#include "base/flat_map.h"
 #include "base/timer.h"
 #include "base/unixtime.h"
+#include "data/data_forum.h"
+#include "data/data_forum_topic.h"
 #include "data/data_peer.h"
 #include "data/data_session.h"
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
+#include "mainwindow.h"
 #include "settings/settings_common.h"
 #include "ui/layers/generic_box.h"
+#include "ui/layers/standalone_layer_stack.h"
 #include "ui/vertical_list.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/continuous_sliders.h"
 #include "ui/widgets/discrete_sliders.h"
 #include "ui/widgets/labels.h"
 #include "ui/wrap/vertical_layout.h"
+#include "window/window_controller.h"
 #include "window/window_session_controller.h"
 #include "styles/style_boxes.h"
 #include "styles/style_layers.h"
@@ -36,8 +42,12 @@ constexpr auto kFloodExtraDelay = crl::time(500);
 constexpr auto kShownLimit = 100;
 constexpr auto kPreviewLength = 90;
 constexpr auto kRefreshEvery = 1000;
+constexpr auto kCachedScans = 5;
 constexpr auto kLimits = std::array{
 	500, 1000, 2000, 5000, 10000, 25000, 50000, 100000, 0,
+};
+constexpr auto kSkips = std::array{
+	0, 500, 1000, 2000, 5000, 10000, 25000, 50000, 100000,
 };
 constexpr auto kDefaultLimitIndex = 3;
 
@@ -50,6 +60,7 @@ enum class SortBy {
 
 struct Entry {
 	MsgId id = 0;
+	MsgId topicRoot = 0;
 	TimeId date = 0;
 	PeerId from = 0;
 	QString text;
@@ -60,13 +71,21 @@ struct Entry {
 	bool media = false;
 };
 
-struct State {
+// Shared with the cache, so reopening the window shows the last scan.
+struct Results {
 	std::vector<Entry> entries;
 	SortBy sort = SortBy::Reactions;
 	bool mediaOnly = false;
+	int skip = 0;
 	int limit = kLimits[kDefaultLimitIndex];
 	MsgId offsetId = 0;
 	int scanned = 0;
+	bool reachedStart = false;
+	bool hasScan = false;
+};
+
+struct State {
+	std::shared_ptr<Results> results;
 	int sinceRefresh = 0;
 	bool scanning = false;
 	mtpRequestId requestId = 0;
@@ -76,14 +95,68 @@ struct State {
 	rpl::variable<QString> buttonText = u"Scan"_q;
 };
 
+using CacheKey = std::pair<PeerId, MsgId>;
+
+struct OpenWindow {
+	not_null<Ui::StandaloneLayerStack*> stack;
+	CacheKey key;
+};
+
+[[nodiscard]] auto &Cache() {
+	static auto result = std::vector<
+		std::pair<CacheKey, std::shared_ptr<Results>>>();
+	return result;
+}
+
+[[nodiscard]] auto &Windows() {
+	static auto result = base::flat_map<
+		not_null<Window::SessionController*>,
+		OpenWindow>();
+	return result;
+}
+
+[[nodiscard]] std::shared_ptr<Results> CachedResults(CacheKey key) {
+	for (const auto &[cached, results] : Cache()) {
+		if (cached == key) {
+			return results;
+		}
+	}
+	return nullptr;
+}
+
+void RememberResults(CacheKey key, std::shared_ptr<Results> results) {
+	auto &cache = Cache();
+	cache.erase(ranges::remove(cache, key, [](const auto &pair) {
+		return pair.first;
+	}), end(cache));
+	cache.insert(begin(cache), { key, std::move(results) });
+	if (int(cache.size()) > kCachedScans) {
+		cache.resize(kCachedScans);
+	}
+}
+
 [[nodiscard]] QString FormatNumber(int value) {
 	return QLocale().toString(value);
 }
 
 [[nodiscard]] QString LimitText(int limit) {
 	return limit
-		? (u"Last "_q + FormatNumber(limit) + u" messages"_q)
-		: u"Whole chat"_q;
+		? (FormatNumber(limit) + u" messages"_q)
+		: u"All the rest"_q;
+}
+
+[[nodiscard]] QString SkipText(int skip) {
+	return skip
+		? (u"Skip newest "_q + FormatNumber(skip))
+		: u"Newest message"_q;
+}
+
+[[nodiscard]] QString RangeText(int skip, int limit) {
+	return u"Range: messages "_q
+		+ FormatNumber(skip)
+		+ QString::fromUtf8(" \xE2\x80\x93 ")
+		+ (limit ? FormatNumber(skip + limit) : u"start of chat"_q)
+		+ u" (counting back from the newest)."_q;
 }
 
 [[nodiscard]] int Metric(const Entry &entry, SortBy sort) {
@@ -96,13 +169,34 @@ struct State {
 	return 0;
 }
 
+[[nodiscard]] MsgId TopicRoot(const MTPDmessage &data) {
+	auto result = MsgId(Data::ForumTopic::kGeneralId);
+	if (const auto reply = data.vreply_to()) {
+		reply->match([&](const MTPDmessageReplyHeader &header) {
+			if (header.is_forum_topic()) {
+				result = MsgId(header.vreply_to_top_id().value_or(
+					header.vreply_to_msg_id().value_or_empty()));
+			}
+		}, [](const auto &) {
+		});
+	}
+	return result;
+}
+
 void ParseMessages(
 		const QVector<MTPMessage> &list,
-		not_null<State*> state) {
+		not_null<Results*> results,
+		bool forum,
+		MsgId scopeRoot) {
 	for (const auto &message : list) {
 		message.match([&](const MTPDmessage &data) {
 			auto entry = Entry();
 			entry.id = MsgId(data.vid().v);
+			entry.topicRoot = scopeRoot
+				? scopeRoot
+				: forum
+				? TopicRoot(data)
+				: MsgId(0);
 			entry.date = data.vdate().v;
 			if (const auto from = data.vfrom_id()) {
 				entry.from = peerFromMTP(*from);
@@ -123,26 +217,38 @@ void ParseMessages(
 				entry.media = (media->type() != mtpc_messageMediaEmpty)
 					&& (media->type() != mtpc_messageMediaWebPage);
 			}
-			state->entries.push_back(std::move(entry));
-			state->offsetId = MsgId(data.vid().v);
+			results->entries.push_back(std::move(entry));
+			results->offsetId = MsgId(data.vid().v);
 		}, [&](const MTPDmessageService &data) {
-			state->offsetId = MsgId(data.vid().v);
+			results->offsetId = MsgId(data.vid().v);
 		}, [&](const MTPDmessageEmpty &data) {
-			state->offsetId = MsgId(data.vid().v);
+			results->offsetId = MsgId(data.vid().v);
 		});
 	}
 }
 
-} // namespace
-
 void TopMessagesBox(
 		not_null<Ui::GenericBox*> box,
 		not_null<Window::SessionController*> controller,
-		not_null<PeerData*> peer) {
+		not_null<PeerData*> peer,
+		MsgId topicRootId) {
 	const auto session = &controller->session();
 	const auto state = box->lifetime().make_state<State>();
+	const auto key = CacheKey(peer->id, topicRootId);
+	const auto forum = peer->isForum();
+	state->results = CachedResults(key);
+	if (!state->results) {
+		state->results = std::make_shared<Results>();
+	}
+	const auto initial = state->results;
 
-	box->setTitle(rpl::single(u"Top messages"_q));
+	auto boxTitle = u"Top messages: "_q + peer->name();
+	if (topicRootId) {
+		if (const auto topic = peer->forumTopicFor(topicRootId)) {
+			boxTitle = u"Top messages: "_q + topic->title();
+		}
+	}
+	box->setTitle(rpl::single(boxTitle));
 	box->setWidth(st::boxWideWidth);
 
 	const auto content = box->verticalLayout();
@@ -157,36 +263,71 @@ void TopMessagesBox(
 			u"Views"_q }) {
 		tabs->addSection(title);
 	}
-	tabs->setActiveSectionFast(0);
+	tabs->setActiveSectionFast(int(initial->sort));
 
 	Ui::AddSkip(content);
 	const auto mediaOnly = content->add(object_ptr<Ui::SettingsButton>(
 		content,
 		rpl::single(u"Media only"_q),
 		st::settingsButtonNoIcon));
-	mediaOnly->toggleOn(rpl::single(false));
+	mediaOnly->toggleOn(rpl::single(initial->mediaOnly));
 
-	const auto limitText = box->lifetime().make_state<
-		rpl::event_stream<QString>>();
-	Settings::AddButtonWithLabel(
-		content,
-		rpl::single(u"Messages to scan"_q),
-		limitText->events_starting_with(LimitText(state->limit)),
-		st::autoDownloadLimitButton
-	)->setAttribute(Qt::WA_TransparentForMouseEvents);
-	const auto slider = content->add(
-		object_ptr<Ui::MediaSlider>(content, st::autoDownloadLimitSlider),
-		st::autoDownloadLimitPadding);
-	slider->resize(st::autoDownloadLimitSlider.seekSize);
-	slider->setPseudoDiscrete(
-		int(kLimits.size()),
-		[](int index) { return kLimits[index]; },
-		state->limit,
+	const auto range = box->lifetime().make_state<
+		rpl::variable<std::pair<int, int>>>(
+			std::make_pair(initial->skip, initial->limit));
+
+	const auto addSlider = [&](
+			const QString &label,
+			auto values,
+			int current,
+			Fn<QString(int)> text,
+			Fn<void(int)> changed) {
+		const auto valueText = box->lifetime().make_state<
+			rpl::event_stream<QString>>();
+		Settings::AddButtonWithLabel(
+			content,
+			rpl::single(label),
+			valueText->events_starting_with(text(current)),
+			st::autoDownloadLimitButton
+		)->setAttribute(Qt::WA_TransparentForMouseEvents);
+		const auto slider = content->add(
+			object_ptr<Ui::MediaSlider>(content, st::autoDownloadLimitSlider),
+			st::autoDownloadLimitPadding);
+		slider->resize(st::autoDownloadLimitSlider.seekSize);
+		slider->setPseudoDiscrete(
+			int(values.size()),
+			[=](int index) { return values[index]; },
+			current,
+			[=](int value) {
+				valueText->fire(text(value));
+				changed(value);
+			});
+	};
+	addSlider(
+		u"Start from"_q,
+		kSkips,
+		initial->skip,
+		SkipText,
 		[=](int value) {
-			state->limit = value;
-			limitText->fire(LimitText(value));
+			*range = std::make_pair(value, range->current().second);
+		});
+	addSlider(
+		u"Messages to scan"_q,
+		kLimits,
+		initial->limit,
+		LimitText,
+		[=](int value) {
+			*range = std::make_pair(range->current().first, value);
 		});
 
+	content->add(
+		object_ptr<Ui::FlatLabel>(
+			content,
+			range->value() | rpl::map([](std::pair<int, int> value) {
+				return RangeText(value.first, value.second);
+			}),
+			st::boxDividerLabel),
+		st::boxRowPadding);
 	Ui::AddSkip(content);
 	content->add(
 		object_ptr<Ui::FlatLabel>(
@@ -201,17 +342,37 @@ void TopMessagesBox(
 	const auto results = content->add(
 		object_ptr<Ui::VerticalLayout>(content));
 
+	const auto jump = [=](MsgId id, MsgId topicRoot) {
+		controller->window().activate();
+		const auto params = Window::SectionShow(
+			Window::SectionShow::Way::ClearStack);
+		if (topicRoot && peer->forum()) {
+			if (const auto topic = peer->forumTopicFor(topicRoot)) {
+				controller->showTopic(topic, id, params);
+			} else {
+				peer->forum()->requestTopic(topicRoot, crl::guard(box, [=] {
+					if (const auto topic = peer->forumTopicFor(topicRoot)) {
+						controller->showTopic(topic, id, params);
+					}
+				}));
+			}
+			return;
+		}
+		controller->showPeerHistory(peer, params.way, id);
+	};
+
 	const auto refresh = [=] {
 		results->clear();
+		const auto data = state->results;
 		auto sorted = std::vector<const Entry*>();
-		sorted.reserve(state->entries.size());
-		for (const auto &entry : state->entries) {
-			if ((!state->mediaOnly || entry.media)
-				&& Metric(entry, state->sort) > 0) {
+		sorted.reserve(data->entries.size());
+		for (const auto &entry : data->entries) {
+			if ((!data->mediaOnly || entry.media)
+				&& Metric(entry, data->sort) > 0) {
 				sorted.push_back(&entry);
 			}
 		}
-		const auto sort = state->sort;
+		const auto sort = data->sort;
 		ranges::sort(sorted, [=](const Entry *a, const Entry *b) {
 			const auto ma = Metric(*a, sort);
 			const auto mb = Metric(*b, sort);
@@ -240,25 +401,19 @@ void TopMessagesBox(
 				+ QString::fromUtf8(" \xC2\xB7 ")
 				+ date;
 			const auto id = entry->id;
+			const auto topicRoot = entry->topicRoot;
 			Settings::AddButtonWithLabel(
 				results,
 				rpl::single(text),
 				rpl::single(label),
 				st::settingsButtonNoIcon
 			)->addClickHandler([=] {
-				const auto weak = base::make_weak(controller);
-				box->closeBox();
-				crl::on_main([=] {
-					if (const auto strong = weak.get()) {
-						strong->showPeerHistory(
-							peer,
-							Window::SectionShow::Way::Forward,
-							id);
-					}
+				crl::on_main(box, [=] {
+					jump(id, topicRoot);
 				});
 			});
 		}
-		if (sorted.empty() && !state->entries.empty()) {
+		if (sorted.empty() && !data->entries.empty()) {
 			results->add(
 				object_ptr<Ui::FlatLabel>(
 					results,
@@ -270,13 +425,21 @@ void TopMessagesBox(
 	};
 
 	const auto updateStatus = [=] {
-		const auto of = state->limit
-			? (u" of "_q + FormatNumber(state->limit))
+		const auto data = state->results;
+		const auto of = data->limit
+			? (u" of "_q + FormatNumber(data->limit))
 			: QString();
 		state->status = (state->scanning ? u"Scanning: "_q : u"Scanned "_q)
-			+ FormatNumber(state->scanned)
+			+ FormatNumber(data->scanned)
 			+ of
-			+ u" messages."_q;
+			+ u" messages"_q
+			+ (data->skip
+				? (u" (after skipping "_q + FormatNumber(data->skip) + u")"_q)
+				: QString())
+			+ u"."_q
+			+ ((!state->scanning && data->reachedStart)
+				? u" Reached the start."_q
+				: QString());
 	};
 
 	const auto finish = [=](const QString &suffix) {
@@ -293,6 +456,57 @@ void TopMessagesBox(
 		refresh();
 	};
 
+	const auto done = [=](const MTPmessages_Messages &result) {
+		state->requestId = 0;
+		if (!state->scanning) {
+			return;
+		}
+		const auto data = state->results;
+		auto count = 0;
+		result.match([&](const MTPDmessages_messagesNotModified &) {
+		}, [&](const auto &list) {
+			session->data().processUsers(list.vusers());
+			session->data().processChats(list.vchats());
+			const auto &messages = list.vmessages().v;
+			count = int(messages.size());
+			ParseMessages(messages, data.get(), forum, topicRootId);
+		});
+		data->scanned += count;
+		state->sinceRefresh += count;
+		if (!count) {
+			data->reachedStart = true;
+			finish(QString());
+			return;
+		} else if (data->limit && data->scanned >= data->limit) {
+			finish(QString());
+			return;
+		}
+		updateStatus();
+		if (state->sinceRefresh >= kRefreshEvery) {
+			state->sinceRefresh = 0;
+			refresh();
+		}
+		state->timer.callOnce(kRequestDelay);
+	};
+
+	const auto fail = [=](const MTP::Error &error) {
+		state->requestId = 0;
+		if (!state->scanning) {
+			return;
+		}
+		const auto type = error.type();
+		if (type.startsWith(u"FLOOD_WAIT_"_q)) {
+			const auto seconds = type.mid(11).toInt();
+			state->status = u"Telegram asked to slow down, waiting "_q
+				+ QString::number(seconds)
+				+ u"s..."_q;
+			state->timer.callOnce(seconds * crl::time(1000)
+				+ kFloodExtraDelay);
+			return;
+		}
+		finish(u"Stopped: "_q + type);
+	};
+
 	state->timer.setCallback([=] {
 		if (state->requestNext) {
 			state->requestNext();
@@ -302,66 +516,43 @@ void TopMessagesBox(
 		if (!state->scanning) {
 			return;
 		}
+		const auto data = state->results;
 		auto limit = kPerRequest;
-		if (state->limit) {
-			limit = std::min(limit, state->limit - state->scanned);
+		if (data->limit) {
+			limit = std::min(limit, data->limit - data->scanned);
 			if (limit <= 0) {
 				finish(QString());
 				return;
 			}
 		}
-		state->requestId = session->api().request(MTPmessages_GetHistory(
-			peer->input(),
-			MTP_int(int(state->offsetId.bare)),
-			MTP_int(0),
-			MTP_int(0),
-			MTP_int(limit),
-			MTP_int(0),
-			MTP_int(0),
-			MTP_long(0)
-		)).done(crl::guard(box, [=](const MTPmessages_Messages &result) {
-			state->requestId = 0;
-			if (!state->scanning) {
-				return;
-			}
-			auto count = 0;
-			result.match([&](const MTPDmessages_messagesNotModified &) {
-			}, [&](const auto &data) {
-				session->data().processUsers(data.vusers());
-				session->data().processChats(data.vchats());
-				const auto &list = data.vmessages().v;
-				count = int(list.size());
-				ParseMessages(list, state);
-			});
-			state->scanned += count;
-			state->sinceRefresh += count;
-			if (!count || (state->limit && state->scanned >= state->limit)) {
-				finish(count ? QString() : u"Reached the start."_q);
-				return;
-			}
-			updateStatus();
-			if (state->sinceRefresh >= kRefreshEvery) {
-				state->sinceRefresh = 0;
-				refresh();
-			}
-			state->timer.callOnce(kRequestDelay);
-		})).fail(crl::guard(box, [=](const MTP::Error &error) {
-			state->requestId = 0;
-			if (!state->scanning) {
-				return;
-			}
-			const auto type = error.type();
-			if (type.startsWith(u"FLOOD_WAIT_"_q)) {
-				const auto seconds = type.mid(11).toInt();
-				state->status = u"Telegram asked to slow down, waiting "_q
-					+ QString::number(seconds)
-					+ u"s..."_q;
-				state->timer.callOnce(seconds * crl::time(1000)
-					+ kFloodExtraDelay);
-				return;
-			}
-			finish(u"Stopped: "_q + type);
-		})).handleFloodErrors().send();
+		const auto offsetId = int(data->offsetId.bare);
+		const auto addOffset = offsetId ? 0 : data->skip;
+		if (topicRootId) {
+			state->requestId = session->api().request(MTPmessages_GetReplies(
+				peer->input(),
+				MTP_int(int(topicRootId.bare)),
+				MTP_int(offsetId),
+				MTP_int(0), // offset_date
+				MTP_int(addOffset),
+				MTP_int(limit),
+				MTP_int(0), // max_id
+				MTP_int(0), // min_id
+				MTP_long(0) // hash
+			)).done(crl::guard(box, done)).fail(crl::guard(box, fail)
+			).handleFloodErrors().send();
+		} else {
+			state->requestId = session->api().request(MTPmessages_GetHistory(
+				peer->input(),
+				MTP_int(offsetId),
+				MTP_int(0), // offset_date
+				MTP_int(addOffset),
+				MTP_int(limit),
+				MTP_int(0), // max_id
+				MTP_int(0), // min_id
+				MTP_long(0) // hash
+			)).done(crl::guard(box, done)).fail(crl::guard(box, fail)
+			).handleFloodErrors().send();
+		}
 	};
 
 	const auto start = [=] {
@@ -369,9 +560,15 @@ void TopMessagesBox(
 			finish(u"Stopped."_q);
 			return;
 		}
-		state->entries.clear();
-		state->offsetId = 0;
-		state->scanned = 0;
+		const auto previous = state->results;
+		const auto fresh = std::make_shared<Results>();
+		fresh->sort = previous->sort;
+		fresh->mediaOnly = previous->mediaOnly;
+		fresh->skip = range->current().first;
+		fresh->limit = range->current().second;
+		fresh->hasScan = true;
+		state->results = fresh;
+		RememberResults(key, fresh);
 		state->sinceRefresh = 0;
 		state->scanning = true;
 		state->buttonText = u"Stop"_q;
@@ -382,18 +579,67 @@ void TopMessagesBox(
 
 	tabs->sectionActivated(
 	) | rpl::on_next([=](int index) {
-		state->sort = SortBy(index);
+		state->results->sort = SortBy(index);
 		refresh();
 	}, tabs->lifetime());
 
 	mediaOnly->toggledChanges(
 	) | rpl::on_next([=](bool value) {
-		state->mediaOnly = value;
+		state->results->mediaOnly = value;
 		refresh();
 	}, mediaOnly->lifetime());
 
-	state->status = u"Pick what to sort by, then press Scan."_q;
+	if (initial->hasScan) {
+		updateStatus();
+		state->status = state->status.current()
+			+ u" Showing your last scan, press Scan to rescan."_q;
+		refresh();
+	} else {
+		state->status = u"Pick a range and what to sort by, then press Scan."_q;
+	}
 
 	box->addButton(state->buttonText.value(), start);
 	box->addButton(tr::lng_close(), [=] { box->closeBox(); });
+}
+
+} // namespace
+
+void ShowTopMessagesWindow(
+		not_null<Window::SessionController*> controller,
+		not_null<PeerData*> peer,
+		MsgId topicRootId) {
+	const auto key = CacheKey(peer->id, topicRootId);
+	auto &windows = Windows();
+	auto i = windows.find(controller);
+	if (i != end(windows)) {
+		if (const auto panel = i->second.stack->currentPanel()) {
+			if (i->second.key == key) {
+				panel->show();
+				panel->raise();
+				panel->activateWindow();
+				return;
+			}
+		}
+	} else {
+		const auto stack = controller->lifetime().make_state<
+			Ui::StandaloneLayerStack>();
+		i = windows.emplace(controller, OpenWindow{ stack, key }).first;
+		controller->lifetime().add([=] {
+			Windows().remove(controller);
+		});
+	}
+	i->second.key = key;
+	const auto stack = i->second.stack;
+	stack->setAnchor(controller->widget()->geometry(), std::nullopt, {});
+	stack->showBox(
+		Box(TopMessagesBox, controller, peer, topicRootId),
+		Ui::LayerOption::CloseOther,
+		anim::type::normal);
+	if (const auto panel = stack->currentPanel()) {
+		// Keep the list above the main window while jumping to results.
+		panel->setWindowFlag(Qt::WindowStaysOnTopHint, true);
+		panel->show();
+		panel->raise();
+		panel->activateWindow();
+	}
 }
