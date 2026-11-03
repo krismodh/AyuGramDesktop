@@ -857,6 +857,9 @@ auto OverlayWidget::RendererGL::controlMeta(Over control) const -> Control {
 	case Over::More: return { 5, &st::mediaviewMore };
 	case Over::Draw: return { 6, &st::mediaviewDraw };
 	case Over::Recognize: return { 7, &st::mediaviewRecognize };
+	case Over::OriginalSize: return _owner->_originalSizeMode
+		? Control{ 9, &st::mediaviewFitSize }
+		: Control{ 8, &st::mediaviewOriginalSize };
 	}
 	Unexpected("Control value in OverlayWidget::RendererGL::ControlIndex.");
 }
@@ -874,6 +877,8 @@ void OverlayWidget::RendererGL::validateControls() {
 		controlMeta(Over::More),
 		controlMeta(Over::Draw),
 		controlMeta(Over::Recognize),
+		Control{ 8, &st::mediaviewOriginalSize },
+		Control{ 9, &st::mediaviewFitSize },
 	};
 	auto maxWidth = 0;
 	auto fullHeight = 0;
