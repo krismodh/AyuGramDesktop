@@ -23,12 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Race three runner pools; the first build to finish is the one to use.
+          # Race two runner pools; the first build to finish is the one to use.
           - runner: macos-26
             arch: arm64
           - runner: macos-15
-            arch: arm64
-          - runner: macos-14
             arch: arm64
 
     env:

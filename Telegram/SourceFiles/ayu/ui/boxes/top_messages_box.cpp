@@ -5,6 +5,7 @@
 //
 // Copyright @Radolyn, 2026
 #include "ayu/ui/boxes/top_messages_box.h"
+#include "ayu/ui/top_messages_view/tm_section.h"
 
 #include "apiwrap.h"
 #include "base/flat_map.h"
@@ -923,6 +924,43 @@ void TopMessagesBox(
 				st::settingsButtonNoIcon
 			)->addClickHandler([=] {
 				crl::on_main(box, [=] { browse(*navItems, 0, sort); });
+			});
+			const auto pageFirst = first;
+			const auto pageTill = till;
+			Settings::AddButtonWithLabel(
+				results,
+				rpl::single(u"Open this page as a chat"_q),
+				rpl::single(u"#"_q
+					+ FormatNumber(first + 1)
+					+ QString::fromUtf8("\xE2\x80\x93")
+					+ FormatNumber(till)),
+				st::settingsButtonNoIcon
+			)->addClickHandler([=] {
+				crl::on_main(box, [=] {
+					auto ids = std::vector<FullMsgId>();
+					ids.reserve(pageTill - pageFirst);
+					for (auto i = pageFirst; i < pageTill
+						&& i < int(navItems->size()); ++i) {
+						ids.push_back(FullMsgId(peer->id, (*navItems)[i].id));
+					}
+					if (ids.empty()) {
+						return;
+					}
+					controller->window().activate();
+					if (const auto window = box->window()) {
+						window->hide();
+					}
+					controller->showSection(
+						std::make_shared<TopMessagesView::SectionMemento>(
+							peer,
+							std::move(ids),
+							u"Top by "_q
+								+ SortName(sort)
+								+ u" #"_q
+								+ FormatNumber(pageFirst + 1)
+								+ QString::fromUtf8("\xE2\x80\x93")
+								+ FormatNumber(pageTill)));
+				});
 			});
 		}
 		for (auto index = first; index != till; ++index) {

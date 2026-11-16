@@ -179,6 +179,12 @@ set(ayugram_files
         ayu/ui/message_history/history_item.h
         ayu/ui/message_history/history_section.cpp
         ayu/ui/message_history/history_section.h
+        ayu/ui/top_messages_view/tm_inner.cpp
+        ayu/ui/top_messages_view/tm_inner.h
+        ayu/ui/top_messages_view/tm_item.cpp
+        ayu/ui/top_messages_view/tm_item.h
+        ayu/ui/top_messages_view/tm_section.cpp
+        ayu/ui/top_messages_view/tm_section.h
         ayu/ui/boxes/edit_mark_box.cpp
         ayu/ui/boxes/edit_mark_box.h
         ayu/ui/boxes/top_messages_box.cpp
