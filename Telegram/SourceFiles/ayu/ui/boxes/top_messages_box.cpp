@@ -17,6 +17,9 @@
 #include "lang/lang_keys.h"
 #include "main/main_session.h"
 #include "mainwindow.h"
+#include "mainwidget.h"
+#include "dialogs/dialogs_key.h"
+#include "ui/painter.h"
 #include "settings.h"
 #include "settings/settings_common.h"
 #include "ui/layers/generic_box.h"
@@ -30,6 +33,7 @@
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
 #include "styles/style_boxes.h"
+#include "styles/style_chat_helpers.h"
 #include "styles/style_layers.h"
 #include "styles/style_settings.h"
 
@@ -39,6 +43,7 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QLocale>
 #include <QtCore/QSaveFile>
+#include <QtWidgets/QAbstractScrollArea>
 
 namespace {
 
@@ -372,6 +377,299 @@ void ParseMessages(
 	}
 }
 
+
+[[nodiscard]] QString SortName(SortBy sort) {
+	switch (sort) {
+	case SortBy::Reactions: return u"reactions"_q;
+	case SortBy::Replies: return u"replies"_q;
+	case SortBy::Forwards: return u"forwards"_q;
+	case SortBy::Views: return u"views"_q;
+	}
+	return QString();
+}
+
+void JumpToResult(
+		not_null<Window::SessionController*> controller,
+		not_null<PeerData*> peer,
+		MsgId id,
+		MsgId topicRoot) {
+	const auto params = Window::SectionShow(
+		Window::SectionShow::Way::ClearStack);
+	if (topicRoot && peer->forum()) {
+		if (const auto topic = peer->forumTopicFor(topicRoot)) {
+			controller->showTopic(topic, id, params);
+		} else {
+			peer->forum()->requestTopic(topicRoot, crl::guard(controller.get(), [=] {
+				if (const auto topic = peer->forumTopicFor(topicRoot)) {
+					controller->showTopic(topic, id, params);
+				}
+			}));
+		}
+		return;
+	}
+	controller->showPeerHistory(peer, params.way, id);
+}
+
+struct NavItem {
+	MsgId id = 0;
+	MsgId topicRoot = 0;
+	int metric = 0;
+};
+
+// Floating "3 of 250  ^ v" bar at the bottom of the chat, like in-chat search.
+class ResultsBar final : public Ui::RpWidget {
+public:
+	ResultsBar(
+		not_null<Ui::RpWidget*> parent,
+		not_null<Window::SessionController*> controller,
+		not_null<PeerData*> peer,
+		MsgId topicRootId,
+		SortBy sort,
+		std::vector<NavItem> items,
+		int index);
+
+	void go(int index);
+
+private:
+	void updateText();
+	void relayout();
+	void updatePlacement();
+	[[nodiscard]] bool inOurChat() const;
+
+	const not_null<Window::SessionController*> _controller;
+	const not_null<PeerData*> _peer;
+	const MsgId _topicRootId;
+	const SortBy _sort;
+	const std::vector<NavItem> _items;
+	int _index = 0;
+
+	const not_null<Ui::FlatLabel*> _title;
+	const not_null<Ui::FlatLabel*> _counter;
+	const not_null<Ui::LinkButton*> _list;
+	const not_null<Ui::IconButton*> _previous;
+	const not_null<Ui::IconButton*> _next;
+	const not_null<Ui::IconButton*> _close;
+	base::Timer _placeTimer;
+
+};
+
+[[nodiscard]] auto &Bars() {
+	static auto result = base::flat_map<
+		not_null<Window::SessionController*>,
+		base::unique_qptr<ResultsBar>>();
+	return result;
+}
+
+ResultsBar::ResultsBar(
+	not_null<Ui::RpWidget*> parent,
+	not_null<Window::SessionController*> controller,
+	not_null<PeerData*> peer,
+	MsgId topicRootId,
+	SortBy sort,
+	std::vector<NavItem> items,
+	int index)
+: RpWidget(parent)
+, _controller(controller)
+, _peer(peer)
+, _topicRootId(topicRootId)
+, _sort(sort)
+, _items(std::move(items))
+, _title(Ui::CreateChild<Ui::FlatLabel>(
+	this,
+	u"Top messages"_q,
+	st::boxDividerLabel))
+, _counter(Ui::CreateChild<Ui::FlatLabel>(
+	this,
+	QString(),
+	st::defaultSettingsRightLabel))
+, _list(Ui::CreateChild<Ui::LinkButton>(this, u"List"_q))
+// Same icons (and swap) as the in-chat search bar: up = higher rank.
+, _previous(Ui::CreateChild<Ui::IconButton>(this, st::calendarNext))
+, _next(Ui::CreateChild<Ui::IconButton>(this, st::calendarPrevious))
+, _close(Ui::CreateChild<Ui::IconButton>(this, st::boxTitleClose))
+, _placeTimer([=] { updatePlacement(); }) {
+	_title->setAttribute(Qt::WA_TransparentForMouseEvents);
+	_counter->setAttribute(Qt::WA_TransparentForMouseEvents);
+
+	_previous->setClickedCallback([=] { go(_index - 1); });
+	_next->setClickedCallback([=] { go(_index + 1); });
+	_list->setClickedCallback([=] {
+		const auto controller = _controller;
+		const auto peer = _peer;
+		const auto root = _topicRootId;
+		crl::on_main(controller.get(), [=] {
+			ShowTopMessagesWindow(controller, peer, root);
+		});
+	});
+	_close->setClickedCallback([=] {
+		const auto controller = _controller;
+		crl::on_main(controller.get(), [=] {
+			Bars().remove(controller);
+		});
+	});
+
+	sizeValue() | rpl::on_next([=] { relayout(); }, lifetime());
+
+	paintRequest() | rpl::on_next([=] {
+		auto p = QPainter(this);
+		auto hq = PainterHighQualityEnabler(p);
+		const auto radius = height() / 2.;
+		p.setPen(st::shadowFg);
+		p.setBrush(st::windowBg);
+		p.drawRoundedRect(
+			QRectF(rect()).marginsRemoved({ 0.5, 0.5, 0.5, 0.5 }),
+			radius,
+			radius);
+	}, lifetime());
+
+	resize(st::boxWideWidth, st::historyComposeButton.height);
+	updateText();
+	updatePlacement();
+	_placeTimer.callEach(250);
+}
+
+void ResultsBar::relayout() {
+	const auto h = height();
+	auto right = width() - st::normalFont->spacew;
+	_close->moveToLeft(right - _close->width(), (h - _close->height()) / 2);
+	right -= _close->width();
+	_next->moveToLeft(right - _next->width(), (h - _next->height()) / 2);
+	right -= _next->width();
+	_previous->moveToLeft(
+		right - _previous->width(),
+		(h - _previous->height()) / 2);
+	right -= _previous->width() + st::normalFont->spacew * 2;
+	_list->moveToLeft(right - _list->width(), (h - _list->height()) / 2);
+	right -= _list->width() + st::normalFont->spacew * 3;
+
+	const auto left = st::normalFont->spacew * 4;
+	const auto top = (h - _title->height() - _counter->height()) / 2;
+	_title->resizeToWidth(std::max(right - left, 1));
+	_title->moveToLeft(left, top);
+	_counter->moveToLeft(left, top + _title->height());
+}
+
+bool ResultsBar::inOurChat() const {
+	const auto key = _controller->activeChatCurrent();
+	if (key.peer() != _peer) {
+		return false;
+	} else if (_topicRootId) {
+		const auto topic = key.topic();
+		return topic && topic->rootId() == _topicRootId;
+	}
+	return true;
+}
+
+void ResultsBar::updatePlacement() {
+	const auto parent = parentWidget();
+	const auto area = inOurChat()
+		? _controller->content()->ayuChatAreaWidget()
+		: nullptr;
+	auto scroll = (QAbstractScrollArea*)nullptr;
+	if (area) {
+		for (const auto child : area->findChildren<QAbstractScrollArea*>(
+				Qt::FindDirectChildrenOnly)) {
+			if (child->isVisible()
+				&& (!scroll || child->height() > scroll->height())) {
+				scroll = child;
+			}
+		}
+	}
+	if (!scroll || !parent) {
+		hide();
+		return;
+	}
+	const auto skip = st::historyComposeButton.height / 3;
+	const auto origin = scroll->mapTo(parent, QPoint());
+	const auto width = std::min(
+		scroll->width() - 2 * skip,
+		st::boxWideWidth + st::boxWideWidth / 3);
+	const auto left = origin.x() + (scroll->width() - width) / 2;
+	const auto top = origin.y() + scroll->height() - height() - skip;
+	if (this->width() != width) {
+		resize(width, height());
+	}
+	move(left, top);
+	if (isHidden()) {
+		show();
+	}
+	if (!parent->children().isEmpty() && parent->children().back() != this) {
+		raise();
+	}
+}
+
+void ResultsBar::updateText() {
+	const auto total = int(_items.size());
+	const auto &item = _items[_index];
+	_title->setText(u"Top messages by "_q + SortName(_sort));
+	_counter->setText(FormatNumber(_index + 1)
+		+ u" of "_q
+		+ FormatNumber(total)
+		+ QString::fromUtf8("  \xC2\xB7  ")
+		+ FormatNumber(item.metric)
+		+ u" "_q
+		+ SortName(_sort));
+	_counter->resizeToNaturalWidth(width());
+
+	const auto prevDisabled = (_index <= 0);
+	const auto nextDisabled = (_index + 1 >= total);
+	_previous->setAttribute(Qt::WA_TransparentForMouseEvents, prevDisabled);
+	_next->setAttribute(Qt::WA_TransparentForMouseEvents, nextDisabled);
+	_previous->setIconOverride(prevDisabled
+		? &st::calendarNextDisabled
+		: nullptr);
+	_next->setIconOverride(nextDisabled
+		? &st::calendarPreviousDisabled
+		: nullptr);
+	relayout();
+}
+
+void ResultsBar::go(int index) {
+	if (_items.empty()) {
+		return;
+	}
+	_index = std::clamp(index, 0, int(_items.size()) - 1);
+	updateText();
+	const auto &item = _items[_index];
+	const auto controller = _controller;
+	const auto peer = _peer;
+	const auto id = item.id;
+	const auto root = item.topicRoot;
+	crl::on_main(controller.get(), [=] {
+		JumpToResult(controller, peer, id, root);
+	});
+}
+
+void ShowResultsBar(
+		not_null<Window::SessionController*> controller,
+		not_null<PeerData*> peer,
+		MsgId topicRootId,
+		SortBy sort,
+		std::vector<NavItem> items,
+		int index) {
+	const auto main = controller->content();
+	if (items.empty()) {
+		return;
+	}
+	auto &bars = Bars();
+	if (bars.find(controller) == end(bars)) {
+		controller->lifetime().add([=] {
+			Bars().remove(controller);
+		});
+	}
+	auto bar = base::make_unique_q<ResultsBar>(
+		main,
+		controller,
+		peer,
+		topicRootId,
+		sort,
+		std::move(items),
+		index);
+	const auto raw = bar.get();
+	bars[controller] = std::move(bar);
+	raw->go(index);
+}
+
 void TopMessagesBox(
 		not_null<Ui::GenericBox*> box,
 		not_null<Window::SessionController*> controller,
@@ -498,23 +796,23 @@ void TopMessagesBox(
 	const auto results = content->add(
 		object_ptr<Ui::VerticalLayout>(content));
 
-	const auto jump = [=](MsgId id, MsgId topicRoot) {
+	// Opens the inline "X of Y" bar in the chat at this result,
+	// and tucks the list window away (the bar's "List" brings it back).
+	const auto browse = [=](
+			std::vector<NavItem> items,
+			int index,
+			SortBy sort) {
 		controller->window().activate();
-		const auto params = Window::SectionShow(
-			Window::SectionShow::Way::ClearStack);
-		if (topicRoot && peer->forum()) {
-			if (const auto topic = peer->forumTopicFor(topicRoot)) {
-				controller->showTopic(topic, id, params);
-			} else {
-				peer->forum()->requestTopic(topicRoot, crl::guard(box, [=] {
-					if (const auto topic = peer->forumTopicFor(topicRoot)) {
-						controller->showTopic(topic, id, params);
-					}
-				}));
-			}
-			return;
+		if (const auto window = box->window()) {
+			window->hide();
 		}
-		controller->showPeerHistory(peer, params.way, id);
+		ShowResultsBar(
+			controller,
+			peer,
+			topicRootId,
+			sort,
+			std::move(items),
+			index);
 	};
 
 	const auto refresh = &state->refresh;
@@ -543,6 +841,15 @@ void TopMessagesBox(
 			return (ma != mb) ? (ma > mb) : (a->date > b->date);
 		});
 		const auto total = int(sorted.size());
+		auto navItems = std::make_shared<std::vector<NavItem>>();
+		navItems->reserve(sorted.size());
+		for (const auto entry : sorted) {
+			navItems->push_back({
+				entry->id,
+				entry->topicRoot,
+				Metric(*entry, sort),
+			});
+		}
 		const auto pages = std::max((total + kShownLimit - 1) / kShownLimit, 1);
 		state->page = std::clamp(state->page, 0, pages - 1);
 		const auto first = state->page * kShownLimit;
@@ -565,6 +872,16 @@ void TopMessagesBox(
 					st::boxDividerLabel),
 				st::boxRowPadding)
 			: nullptr;
+		if (total > 0) {
+			Settings::AddButtonWithLabel(
+				results,
+				rpl::single(u"Browse results in chat"_q),
+				rpl::single(u"from #1"_q),
+				st::settingsButtonNoIcon
+			)->addClickHandler([=] {
+				crl::on_main(box, [=] { browse(*navItems, 0, sort); });
+			});
+		}
 		for (auto index = first; index != till; ++index) {
 			const auto entry = sorted[index];
 			const auto from = entry->from
@@ -586,17 +903,13 @@ void TopMessagesBox(
 			const auto label = FormatNumber(Metric(*entry, sort))
 				+ QString::fromUtf8(" \xC2\xB7 ")
 				+ date;
-			const auto id = entry->id;
-			const auto topicRoot = entry->topicRoot;
 			Settings::AddButtonWithLabel(
 				results,
 				rpl::single(text),
 				rpl::single(label),
 				st::settingsButtonNoIcon
 			)->addClickHandler([=] {
-				crl::on_main(box, [=] {
-					jump(id, topicRoot);
-				});
+				crl::on_main(box, [=] { browse(*navItems, index, sort); });
 			});
 		}
 		if (pages > 1) {

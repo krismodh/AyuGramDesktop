@@ -496,6 +496,15 @@ not_null<Media::Player::FloatDelegate*> MainWidget::floatPlayerDelegate() {
 	return static_cast<Media::Player::FloatDelegate*>(this);
 }
 
+QWidget *MainWidget::ayuChatAreaWidget() const {
+	if (_mainSection && !_mainSection->isHidden()) {
+		return _mainSection.data();
+	} else if (_history && !_history->isHidden() && _history->peer()) {
+		return _history.get();
+	}
+	return nullptr;
+}
+
 not_null<Ui::RpWidget*> MainWidget::floatPlayerWidget() {
 	return this;
 }

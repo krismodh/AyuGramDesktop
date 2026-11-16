@@ -227,6 +227,9 @@ public:
 
 	void showNonPremiumLimitToast(bool download);
 
+	// AyuGram: the chat area shown right now (history or a section).
+	[[nodiscard]] QWidget *ayuChatAreaWidget() const;
+
 	void dialogsCancelled();
 	void toggleFiltersMenu(bool value) const;
 
