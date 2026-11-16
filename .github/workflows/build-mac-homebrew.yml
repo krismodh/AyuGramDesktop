@@ -15,7 +15,7 @@ on:
 jobs:
 
   macos:
-    name: MacOS (${{ matrix.arch }})
+    name: MacOS (${{ matrix.arch }}, ${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 355
 
@@ -23,7 +23,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-latest
+          # Race three runner pools; the first build to finish is the one to use.
+          - runner: macos-26
+            arch: arm64
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-14
             arch: arm64
 
     env:
@@ -191,6 +196,6 @@ jobs:
       - name: Upload.
         uses: actions/upload-artifact@v7
         with:
-          name: AyuGram-patched-macOS-${{ matrix.arch }}
+          name: AyuGram-patched-macOS-${{ matrix.arch }}-${{ matrix.runner }}
           path: artifact/AyuGram-patched.zip
           retention-days: 14
