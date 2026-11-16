@@ -77,6 +77,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_groups.h"
 #include "ayu/ayu_settings.h"
 #include "ayu/features/message_shot/message_shot.h"
+#include "ayu/features/filters/filters_controller.h"
 #include "ayu/utils/telegram_helpers.h"
 #include "styles/style_ayu_styles.h"
 
@@ -1665,7 +1666,9 @@ bool Element::isHiddenByGroup() const {
 }
 
 bool Element::isHidden() const {
-	return isMessageHidden(data()) || isHiddenByGroup();
+	return isMessageHidden(data())
+		|| isHiddenByGroup()
+		|| FiltersController::hiddenByChatView(data());
 }
 
 void Element::overrideMedia(std::unique_ptr<Media> media) {
@@ -1765,6 +1768,9 @@ void Element::refreshMedia(Element *replacing) {
 					_media = std::make_unique<GroupedMedia>(
 						this,
 						group->items);
+					if (AyuSettings::getInstance().autoRevealSpoilers()) {
+						_media->revealSpoilers();
+					}
 					if (!pendingResize()) {
 						history()->owner().requestViewResize(this);
 					}
@@ -1773,6 +1779,9 @@ void Element::refreshMedia(Element *replacing) {
 			}
 		}
 		_media = media->createView(this, replacing);
+		if (_media && AyuSettings::getInstance().autoRevealSpoilers()) {
+			_media->revealSpoilers();
+		}
 	} else if (item->showSimilarChannels()) {
 		_media = std::make_unique<SimilarChannels>(this);
 	} else if (isOnlyCustomEmoji()
@@ -2543,7 +2552,9 @@ void Element::destroyUnreadBar() {
 }
 
 int Element::displayedDateHeight() const {
-	if (AyuFeatures::MessageShot::isTakingShot() || isMessageHidden(data())) {
+	if (AyuFeatures::MessageShot::isTakingShot()
+		|| isMessageHidden(data())
+		|| FiltersController::hiddenByChatView(data())) {
 		return 0;
 	}
 

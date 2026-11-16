@@ -341,6 +341,28 @@ void AddTopMessagesAction(PeerData *peerData,
 	}, &st::menuIconStats);
 }
 
+void AddChatViewActions(PeerData *peerData,
+						const Window::PeerMenuCallback &addCallback) {
+	if (!peerData) {
+		return;
+	}
+	const auto peer = not_null<PeerData*>(peerData);
+	const auto mediaOnly = FiltersController::mediaOnlyView(peer);
+	addCallback(
+		mediaOnly ? u"Show all messages"_q : u"Show only media"_q,
+		[=] { FiltersController::toggleMediaOnlyView(peer); },
+		mediaOnly ? &st::menuIconCaptionShow : &st::menuIconCaptionHide);
+	if (!mediaOnly) {
+		const auto hideService = FiltersController::hideServiceView(peer);
+		addCallback(
+			hideService
+				? u"Show service messages"_q
+				: u"Hide service messages"_q,
+			[=] { FiltersController::toggleHideServiceView(peer); },
+			hideService ? &st::menuIconCaptionShow : &st::menuIconCaptionHide);
+	}
+}
+
 void AddJumpToBeginningAction(PeerData *peerData,
 							  Data::Thread *thread,
 							  not_null<Window::SessionController*> sessionController,

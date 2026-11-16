@@ -580,6 +580,12 @@ void AyuSettings::setDisableAds(bool val) {
 	save();
 }
 
+void AyuSettings::setAutoRevealSpoilers(bool val) {
+	if (_autoRevealSpoilers.current() == val) return;
+	_autoRevealSpoilers = val;
+	save();
+}
+
 void AyuSettings::setDisableStories(bool val) {
 	if (_disableStories.current() == val) return;
 	_disableStories = val;
@@ -1087,6 +1093,7 @@ void to_json(nlohmann::json &j, const AyuSettings &s) {
 		{"hideFromBlocked", s._hideFromBlocked.current()},
 		{"semiTransparentDeletedMessages", s._semiTransparentDeletedMessages.current()},
 		{"disableAds", s._disableAds.current()},
+		{"autoRevealSpoilers", s._autoRevealSpoilers.current()},
 		{"disableStories", s._disableStories.current()},
 		{"disableCustomBackgrounds", s._disableCustomBackgrounds.current()},
 		{"hidePremiumStatuses", s._hidePremiumStatuses.current()},
@@ -1191,6 +1198,7 @@ void from_json(const nlohmann::json &j, AyuSettings &s) {
 	s._hideFromBlocked = j.value("hideFromBlocked", defaults._hideFromBlocked.current());
 	s._semiTransparentDeletedMessages = j.value("semiTransparentDeletedMessages", defaults._semiTransparentDeletedMessages.current());
 	s._disableAds = j.value("disableAds", defaults._disableAds.current());
+	s._autoRevealSpoilers = j.value("autoRevealSpoilers", defaults._autoRevealSpoilers.current());
 	s._disableStories = j.value("disableStories", defaults._disableStories.current());
 	s._disableCustomBackgrounds = j.value("disableCustomBackgrounds", defaults._disableCustomBackgrounds.current());
 	s._hidePremiumStatuses = j.value("hidePremiumStatuses", defaults._hidePremiumStatuses.current());

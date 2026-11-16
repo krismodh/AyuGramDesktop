@@ -275,6 +275,7 @@ public:
 	[[nodiscard]] bool hideFromBlocked() const { return _hideFromBlocked.current(); }
 	[[nodiscard]] bool semiTransparentDeletedMessages() const { return _semiTransparentDeletedMessages.current(); }
 	[[nodiscard]] bool disableAds() const { return _disableAds.current(); }
+	[[nodiscard]] bool autoRevealSpoilers() const { return _autoRevealSpoilers.current(); }
 	[[nodiscard]] bool disableStories() const { return _disableStories.current(); }
 	[[nodiscard]] bool disableCustomBackgrounds() const { return _disableCustomBackgrounds.current(); }
 	[[nodiscard]] bool hidePremiumStatuses() const { return _hidePremiumStatuses.current(); }
@@ -362,6 +363,7 @@ public:
 	void setHideFromBlocked(bool val);
 	void setSemiTransparentDeletedMessages(bool val);
 	void setDisableAds(bool val);
+	void setAutoRevealSpoilers(bool val);
 	void setDisableStories(bool val);
 	void setDisableCustomBackgrounds(bool val);
 	void setHidePremiumStatuses(bool val);
@@ -633,6 +635,7 @@ private:
 	rpl::variable<bool> _hideFromBlocked = false;
 	rpl::variable<bool> _semiTransparentDeletedMessages = false;
 	rpl::variable<bool> _disableAds = true;
+	rpl::variable<bool> _autoRevealSpoilers = false;
 	rpl::variable<bool> _disableStories = false;
 	rpl::variable<bool> _disableCustomBackgrounds = false;
 	rpl::variable<bool> _showOnlyAddedEmojisAndStickers = false;

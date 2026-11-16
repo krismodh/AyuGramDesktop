@@ -676,6 +676,12 @@ void BuildOther(SectionBuilder &builder, AyuSectionBuilder &ayu) {
 		.getter = &AyuSettings::disableAds,
 		.setter = &AyuSettings::setDisableAds,
 	});
+	ayu.addSettingToggle({
+		.id = u"ayu/autoRevealSpoilers"_q,
+		.title = tr::ayu_AutoRevealSpoilers(),
+		.getter = &AyuSettings::autoRevealSpoilers,
+		.setter = &AyuSettings::setAutoRevealSpoilers,
+	});
 }
 
 const auto kMeta = BuildHelper({

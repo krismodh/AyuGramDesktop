@@ -11,6 +11,8 @@
 #include "ayu/features/filters/filters_cache_controller.h"
 #include "ayu/features/filters/filters_utils.h"
 #include "ayu/utils/telegram_helpers.h"
+#include "data/data_document.h"
+#include "data/data_media_types.h"
 #include "data/data_peer.h"
 #include "data/data_peer_id.h"
 #include "data/data_session.h"
@@ -26,6 +28,8 @@
 namespace FiltersController {
 
 std::unordered_set<long long> showingFilteredMessages;
+std::unordered_set<long long> mediaOnlyPeers;
+std::unordered_set<long long> hideServicePeers;
 
 bool filterBlocked(const not_null<HistoryItem*> item) {
 	if (item->from() != item->history()->peer) {
@@ -215,6 +219,50 @@ void invalidate(not_null<HistoryItem*> item) {
 	}
 
 	FiltersCacheController::invalidate(item);
+}
+
+bool mediaOnlyView(not_null<PeerData*> peer) {
+	return mediaOnlyPeers.contains(peer->id.value);
+}
+
+void toggleMediaOnlyView(not_null<PeerData*> peer) {
+	if (!mediaOnlyPeers.erase(peer->id.value)) {
+		mediaOnlyPeers.insert(peer->id.value);
+	}
+	FiltersCacheController::fireUpdate();
+}
+
+bool hideServiceView(not_null<PeerData*> peer) {
+	return hideServicePeers.contains(peer->id.value);
+}
+
+void toggleHideServiceView(not_null<PeerData*> peer) {
+	if (!hideServicePeers.erase(peer->id.value)) {
+		hideServicePeers.insert(peer->id.value);
+	}
+	FiltersCacheController::fireUpdate();
+}
+
+bool hiddenByChatView(not_null<HistoryItem*> item) {
+	if (mediaOnlyPeers.empty() && hideServicePeers.empty()) {
+		return false;
+	}
+	const auto id = item->history()->peer->id.value;
+	const auto mediaOnly = mediaOnlyPeers.contains(id);
+	const auto hideService = mediaOnly || hideServicePeers.contains(id);
+	if (item->isService()) {
+		return hideService;
+	} else if (!mediaOnly) {
+		return false;
+	}
+	// Media only: photos, videos, GIFs, files, music and voice notes.
+	const auto media = item->media();
+	if (!media || media->webpage()) {
+		return true;
+	} else if (const auto document = media->document()) {
+		return document->sticker() != nullptr;
+	}
+	return !media->photo();
 }
 
 }

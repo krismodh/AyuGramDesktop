@@ -24,6 +24,13 @@ void toggleFilteredMessagesShown(not_null<PeerData*> peer);
 
 void invalidate(not_null<HistoryItem*> item);
 
+// Per-chat view modes (this session only), toggled from the chat's menu.
+[[nodiscard]] bool mediaOnlyView(not_null<PeerData*> peer);
+void toggleMediaOnlyView(not_null<PeerData*> peer);
+[[nodiscard]] bool hideServiceView(not_null<PeerData*> peer);
+void toggleHideServiceView(not_null<PeerData*> peer);
+[[nodiscard]] bool hiddenByChatView(not_null<HistoryItem*> item);
+
 struct ReversiblePattern
 {
 	std::shared_ptr<icu::RegexPattern> pattern;

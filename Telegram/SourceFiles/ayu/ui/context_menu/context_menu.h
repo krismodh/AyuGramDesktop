@@ -36,6 +36,9 @@ void AddTopMessagesAction(PeerData *peerData,
 						  const Window::PeerMenuCallback &addCallback,
 						  MsgId topicRootId = 0);
 
+void AddChatViewActions(PeerData *peerData,
+						const Window::PeerMenuCallback &addCallback);
+
 void AddShadowBanAction(PeerData *peerData,
 						const Window::PeerMenuCallback &addCallback);
 void AddOpenChannelAction(PeerData *peerData,

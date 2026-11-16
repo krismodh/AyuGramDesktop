@@ -1862,6 +1862,7 @@ void Filler::fillChatsListActions() {
 	addInfo();
 	addViewAsMessages();
 	AyuUi::AddTopMessagesAction(_peer, _controller, _addAction);
+	AyuUi::AddChatViewActions(_peer, _addAction);
 	const auto &all = _peer->forum()->topicsList()->indexed()->all();
 	if (all.size() > kTopicsSearchMinCount) {
 		addSearchTopics();
@@ -1935,6 +1936,7 @@ void Filler::fillHistoryActions() {
 	addInfo();
 	AyuUi::AddJumpToBeginningAction(_peer, _thread, _controller, _addAction);
 	AyuUi::AddTopMessagesAction(_peer, _controller, _addAction);
+	AyuUi::AddChatViewActions(_peer, _addAction);
 	AyuUi::AddOpenChannelAction(_peer, _controller, _addAction);
 	addViewAsTopics();
 	addManageChat();
@@ -1993,6 +1995,7 @@ void Filler::fillRepliesActions() {
 		addInfo();
 		AyuUi::AddJumpToBeginningAction(_peer, _thread, _controller, _addAction);
 		AyuUi::AddTopMessagesAction(_peer, _controller, _addAction, _topic->rootId());
+		AyuUi::AddChatViewActions(_peer, _addAction);
 		addManageTopic();
 	}
 	addBoostChat();
