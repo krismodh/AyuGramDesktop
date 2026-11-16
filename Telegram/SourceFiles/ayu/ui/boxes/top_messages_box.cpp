@@ -44,6 +44,11 @@
 #include <QtCore/QLocale>
 #include <QtCore/QSaveFile>
 #include <QtWidgets/QAbstractScrollArea>
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QLineEdit>
+#include <QtWidgets/QTextEdit>
+#include <QtGui/QTextDocument>
+#include <QtGui/QKeyEvent>
 
 namespace {
 
@@ -430,7 +435,11 @@ public:
 
 	void go(int index);
 
+protected:
+	bool eventFilter(QObject *o, QEvent *e) override;
+
 private:
+	[[nodiscard]] bool arrowsAllowed() const;
 	void updateText();
 	void relayout();
 	void updatePlacement();
@@ -526,6 +535,9 @@ ResultsBar::ResultsBar(
 	updateText();
 	updatePlacement();
 	_placeTimer.callEach(250);
+
+	// Up / Down step through results while the bar is showing.
+	qApp->installEventFilter(this);
 }
 
 void ResultsBar::relayout() {
@@ -547,6 +559,37 @@ void ResultsBar::relayout() {
 	_title->resizeToWidth(std::max(right - left, 1));
 	_title->moveToLeft(left, top);
 	_counter->moveToLeft(left, top + _title->height());
+}
+
+bool ResultsBar::arrowsAllowed() const {
+	if (isHidden() || QApplication::activeWindow() != window()) {
+		return false;
+	}
+	// Keep the arrows for typing: only take them over an empty message box.
+	const auto focus = QApplication::focusWidget();
+	if (const auto edit = qobject_cast<QTextEdit*>(focus)) {
+		return edit->document()->isEmpty();
+	} else if (const auto line = qobject_cast<QLineEdit*>(focus)) {
+		return line->text().isEmpty();
+	}
+	return true;
+}
+
+bool ResultsBar::eventFilter(QObject *o, QEvent *e) {
+	if (e->type() == QEvent::KeyPress) {
+		const auto key = static_cast<QKeyEvent*>(e);
+		const auto up = (key->key() == Qt::Key_Up);
+		const auto down = (key->key() == Qt::Key_Down);
+		const auto mods = key->modifiers() & ~Qt::KeypadModifier;
+		if ((up || down) && mods == Qt::NoModifier && arrowsAllowed()) {
+			const auto target = _index + (up ? -1 : 1);
+			if (target >= 0 && target < int(_items.size())) {
+				go(target);
+			}
+			return true;
+		}
+	}
+	return RpWidget::eventFilter(o, e);
 }
 
 bool ResultsBar::inOurChat() const {
