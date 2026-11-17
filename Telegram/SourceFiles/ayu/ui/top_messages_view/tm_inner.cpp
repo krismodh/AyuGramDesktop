@@ -858,7 +858,7 @@ void InnerWidget::stepTo(int direction) {
 		}
 	}
 	if (target >= 0) {
-		_scrollToSignal.fire(target);
+		_scrollToSignal.fire_copy(target);
 	} else if (direction > 0) {
 		loadNextChunk();
 	}
