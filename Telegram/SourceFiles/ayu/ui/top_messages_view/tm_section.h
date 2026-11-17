@@ -147,6 +147,14 @@ public:
 		return _downLoaded;
 	}
 
+	void setLoadedCount(int count) {
+		_loadedCount = count;
+	}
+
+	[[nodiscard]] int loadedCount() const {
+		return _loadedCount;
+	}
+
 	void setSearchQuery(QString &&query) {
 		_searchQuery = std::move(query);
 	}
@@ -160,6 +168,7 @@ private:
 	std::vector<FullMsgId> _ids;
 	QString _title;
 	int _scrollTop = 0;
+	int _loadedCount = 0;
 	std::vector<OwnedItem> _items;
 	std::set<uint64> _messageIds;
 	bool _upLoaded = false;

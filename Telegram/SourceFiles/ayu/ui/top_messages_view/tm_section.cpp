@@ -372,13 +372,7 @@ void Widget::doSetInnerFocus() {
 bool Widget::showInternal(
 	not_null<Window::SectionMemento*> memento,
 	const Window::SectionShow &params) {
-	if (auto logMemento = dynamic_cast<SectionMemento*>(memento.get())) {
-		if (logMemento->getPeer() == channel()
-			&& logMemento->ids() == _ids) {
-			restoreState(logMemento);
-			return true;
-		}
-	}
+	// Always open a fresh view (reusing one left stale state behind).
 	return false;
 }
 
