@@ -1,0 +1,227 @@
+# Fast macOS build of the patched AyuGram: Qt, ffmpeg and friends come
+# ready-made from Homebrew, so only a few small libraries and the app are
+# compiled. Based on upstream Telegram Desktop's mac_packaged.yml (v7.2.9).
+# If this one fails, build-mac.yml (push to branch patched-full) builds
+# everything from source instead.
+
+name: Build patched AyuGram (macOS, Homebrew, ccache)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - patched-ccache
+
+jobs:
+
+  macos:
+    name: MacOS (${{ matrix.arch }}, ${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 355
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Race two runner pools; the first build to finish is the one to use.
+          - runner: macos-26
+            arch: arm64
+          - runner: macos-15
+            arch: arm64
+
+    env:
+      GIT: "https://github.com"
+      CMAKE_GENERATOR: "Ninja"
+      CMAKE_BUILD_TYPE: "Release"
+      CMAKE_BUILD_PARALLEL_LEVEL: ""
+      TDE2E: "51743dfd01dff6179e2d8f7095729caa4e2222e9"
+      # tlottie recipe taken from Telegram/build/prepare/prepare.py.
+      TLOTTIE: "31f1b542f8"
+      PATCHES: "519aaa084608fa6f9a2bfbd1959d133c44d94227"
+      RUST_TOOLCHAIN: "1.96.1"
+      # Compiler cache: later builds only recompile files that changed.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 2G
+      CCACHE_COMPRESS: "1"
+      CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime,modules
+
+    steps:
+      - name: Get repository name.
+        run: echo "REPO_NAME=${GITHUB_REPOSITORY##*/}" >> $GITHUB_ENV
+
+      - name: Clone.
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          path: ${{ env.REPO_NAME }}
+
+      - name: First set up.
+        run: |
+          libs="ada-url ffmpeg@6 jpeg-xl libavif libheif minizip openal-soft openh264 openssl opus qtbase qtimageformats qtshadertools qtsvg xz"
+          brew update
+          brew upgrade || true
+          brew install autoconf automake boost ccache cmake libtool ninja pkg-config python $libs
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          BREW="$(brew --prefix)"
+          echo "CMAKE_PREFIX_PATH=$BREW/opt/ffmpeg@6:$BREW/opt/openal-soft" >> $GITHUB_ENV
+          sudo sed -i '' '/CMAKE_${lang}_FLAGS_DEBUG_INIT/s/ -g//' "$BREW/share/cmake/Modules/Compiler/GNU.cmake" || true
+
+          xcodebuild -version > CACHE_KEY.txt
+          brew list --versions $libs >> CACHE_KEY.txt
+          echo "$GITHUB_WORKSPACE" >> CACHE_KEY.txt
+          echo "CACHE_KEY=`md5 -q CACHE_KEY.txt`" >> $GITHUB_ENV
+
+          echo "MACOSX_DEPLOYMENT_TARGET=$(grep 'set(QT_SUPPORTED_MIN_MACOS_VERSION' $BREW/Cellar/qtbase/*/lib/cmake/Qt6/Qt6ConfigExtras.cmake | sed -E 's/^.*"(.*)"\)$/\1/')" >> $GITHUB_ENV
+          echo "LibrariesPath=`pwd`" >> $GITHUB_ENV
+
+          echo "RNNOISE=`curl -sSL --header 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' https://api.github.com/repos/xiph/rnnoise/git/refs/heads/master | jq -r .object.sha`" >> $GITHUB_ENV
+          echo "WEBRTC=`curl -sSL --header 'Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' https://api.github.com/repos/desktop-app/tg_owt/git/refs/heads/master | jq -r .object.sha`" >> $GITHUB_ENV
+
+      - name: RNNoise cache.
+        id: cache-rnnoise
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.LibrariesPath }}/local/rnnoise
+          key: ${{ runner.OS }}-rnnoise-${{ env.RNNOISE }}-${{ env.CACHE_KEY }}
+      - name: RNNoise.
+        if: steps.cache-rnnoise.outputs.cache-hit != 'true'
+        run: |
+          cd $LibrariesPath
+
+          git clone --depth=1 $GIT/xiph/rnnoise.git
+          cd rnnoise
+          ./autogen.sh
+          ./configure --prefix=$LibrariesPath/local/rnnoise --disable-examples --disable-doc
+          make -j$(sysctl -n hw.logicalcpu)
+          make install
+
+      - name: WebRTC cache.
+        id: cache-webrtc
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.LibrariesPath }}/local/tg_owt
+          key: ${{ runner.OS }}-webrtc-${{ env.WEBRTC }}-${{ env.CACHE_KEY }}
+      - name: WebRTC.
+        if: steps.cache-webrtc.outputs.cache-hit != 'true'
+        run: |
+          cd $LibrariesPath
+
+          git clone --depth=1 --recursive --shallow-submodules $GIT/desktop-app/tg_owt.git
+          cd tg_owt
+
+          cmake -Bbuild . -DCMAKE_INSTALL_PREFIX=$LibrariesPath/local/tg_owt
+          cmake --build build
+          cmake --install build
+
+      - name: TDE2E cache.
+        id: cache-tde2e
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.LibrariesPath }}/local/tde2e
+          key: ${{ runner.OS }}-tde2e-${{ env.TDE2E }}-${{ env.CACHE_KEY }}
+      - name: TDE2E.
+        if: steps.cache-tde2e.outputs.cache-hit != 'true'
+        run: |
+          cd $LibrariesPath
+
+          git init tde2e
+          cd tde2e
+          git remote add origin $GIT/tdlib/td.git
+          git fetch --depth=1 origin $TDE2E
+          git reset --hard FETCH_HEAD
+
+          cmake -Bbuild . -DCMAKE_INSTALL_PREFIX=$LibrariesPath/local/tde2e -DTD_E2E_ONLY=ON
+          cmake --build build
+          cmake --install build
+
+      - name: tlottie cache.
+        id: cache-tlottie
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.LibrariesPath }}/local/tlottie
+          key: ${{ runner.OS }}-tlottie-${{ env.TLOTTIE }}-${{ env.PATCHES }}-${{ env.RUST_TOOLCHAIN }}-${{ env.CACHE_KEY }}
+      - name: tlottie.
+        if: steps.cache-tlottie.outputs.cache-hit != 'true'
+        run: |
+          cd $LibrariesPath
+          export RUSTUP_HOME="$LibrariesPath/rustup"
+          export CARGO_HOME="$LibrariesPath/cargo"
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o rustup-init.sh
+          sh rustup-init.sh -y --no-modify-path --profile minimal --default-toolchain "$RUST_TOOLCHAIN"
+          export RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN"
+          export PATH="$CARGO_HOME/bin:$PATH"
+
+          git init desktop-app-patches
+          cd desktop-app-patches
+          git remote add origin $GIT/desktop-app/patches.git
+          git fetch --depth=1 origin $PATCHES
+          git reset --hard FETCH_HEAD
+          cd $LibrariesPath
+
+          git clone $GIT/dkaraush/tlottie.git
+          cd tlottie
+          git checkout $TLOTTIE
+          git apply ../desktop-app-patches/tlottie.patch
+          cargo rustc --lib --release --locked \
+            --features c-api --crate-type staticlib \
+            -- --print native-static-libs
+
+          mkdir -p $LibrariesPath/local/tlottie/lib $LibrariesPath/local/tlottie/include/tlottie
+          cp target/release/libtlottie.a $LibrariesPath/local/tlottie/lib/libtlottie.a
+          cp include/tlottie.h $LibrariesPath/local/tlottie/include/tlottie/tlottie.h
+
+      - name: Restore compiler cache.
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-${{ matrix.runner }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ccache-${{ matrix.runner }}-
+
+      - name: Build AyuGram.
+        run: |
+          cd $REPO_NAME
+          export CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH$(find $LibrariesPath/local -mindepth 1 -maxdepth 1 -type d -exec printf ':%s' {} +)"
+
+          ccache --zero-stats || true
+          cmake -Bbuild . \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_OBJC_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_FLAGS="-Xclang -fno-pch-timestamp" \
+            -DCMAKE_OBJCXX_FLAGS="-Xclang -fno-pch-timestamp" \
+            -DTDESKTOP_API_ID=2040 \
+            -DTDESKTOP_API_HASH=b18441a1ff607e10a989891a5462e627 \
+            -DDESKTOP_APP_DISABLE_AUTOUPDATE=ON
+          cmake --build build
+          ccache --show-stats || true
+
+      - name: Save compiler cache.
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-${{ matrix.runner }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Package.
+        run: |
+          cd $REPO_NAME/build
+          APP="$(find . -maxdepth 1 -name '*.app' | head -n 1)"
+          if [ -z "$APP" ]; then
+            echo "::error::No .app found in build/"
+            ls -la
+            exit 1
+          fi
+          echo "Found $APP"
+          macdeployqt "$APP"
+          codesign --force --deep --sign - "$APP"
+          mkdir -p ../../artifact
+          ditto -c -k --keepParent "$APP" ../../artifact/AyuGram-patched.zip
+
+      - name: Upload.
+        uses: actions/upload-artifact@v7
+        with:
+          name: AyuGram-patched-macOS-${{ matrix.arch }}-${{ matrix.runner }}-ccache
+          path: artifact/AyuGram-patched.zip
+          retention-days: 14
