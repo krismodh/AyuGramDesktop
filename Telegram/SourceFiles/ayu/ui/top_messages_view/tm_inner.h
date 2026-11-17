@@ -229,7 +229,9 @@ private:
 	void updateMinMaxIds();
 	void updateEmptyText();
 	void paintEmpty(Painter &p, not_null<const Ui::ChatStyle*> st);
-	void addRealMessages();
+	void loadNextChunk();
+	void addRealMessages(int from, int till);
+	[[nodiscard]] std::vector<FullMsgId> mediaOrder() const;
 	void removeRealItem(not_null<const HistoryItem*> item);
 	Element *viewForItem(const HistoryItem *item);
 
@@ -268,6 +270,8 @@ private:
 	const not_null<Window::SessionController*> _controller;
 	const not_null<PeerData*> _peer;
 	const std::vector<FullMsgId> _ids;
+	int _loadedCount = 0;
+	bool _loadingChunk = false;
 	const not_null<History*> _history;
 	MTP::Sender _api;
 

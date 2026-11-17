@@ -90,6 +90,10 @@ namespace Media::View {
 
 extern const char kOptionKeepViewerOnFocusLoss[];
 
+// AyuGram: the next time the viewer opens, left / right step through these
+// messages in this order (instead of the chat's shared media).
+void SetNextOpenCustomOrder(std::vector<FullMsgId> ids);
+
 class VideoStream;
 class PlaybackSponsored;
 class GroupThumbs;
@@ -354,6 +358,11 @@ private:
 	void updateGeometry(bool inMove = false);
 	void updateGeometryToScreen(bool inMove = false);
 	bool moveToNext(int delta);
+	[[nodiscard]] int customIndex() const;
+	[[nodiscard]] bool customIsMedia(not_null<HistoryItem*> item) const;
+	[[nodiscard]] bool customHasMore(int index, int step) const;
+	bool customMoveToNext(int delta);
+	void customRequest(int from, int step, Fn<void()> done);
 	void preloadData(int delta);
 
 	void handleScreenChanged(not_null<QScreen*> screen);
@@ -640,6 +649,8 @@ private:
 	const std::unique_ptr<Ui::RpWidget> _titleBugWorkaround;
 	const std::unique_ptr<Ui::RpWidgetWrap> _surface;
 	const not_null<QWidget*> _widget;
+	std::vector<FullMsgId> _customOrder;
+	bool _customLoading = false;
 	QRect _normalGeometry;
 	bool _wasWindowedMode = false;
 	bool _fullscreenInited = false;

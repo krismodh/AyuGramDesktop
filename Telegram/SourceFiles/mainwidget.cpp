@@ -505,6 +505,25 @@ QWidget *MainWidget::ayuChatAreaWidget() const {
 	return nullptr;
 }
 
+QRect MainWidget::ayuChatListRect() const {
+	const auto area = ayuChatAreaWidget();
+	if (!area) {
+		return QRect();
+	}
+	auto local = area->rect();
+	if (area == static_cast<QWidget*>(_history.get())) {
+		local = _history->ayuScrollGeometry();
+	} else if (const auto chat = dynamic_cast<HistoryView::ChatWidget*>(
+			_mainSection.data())) {
+		local = chat->ayuScrollGeometry();
+	}
+	if (local.isEmpty()) {
+		return QRect();
+	}
+	const auto self = static_cast<const QWidget*>(this);
+	return QRect(area->mapTo(self, local.topLeft()), local.size());
+}
+
 not_null<Ui::RpWidget*> MainWidget::floatPlayerWidget() {
 	return this;
 }

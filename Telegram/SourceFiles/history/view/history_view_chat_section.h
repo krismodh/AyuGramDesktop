@@ -180,6 +180,9 @@ public:
 
 	// Float player interface.
 	bool floatPlayerHandleWheelEvent(QEvent *e) override;
+
+	// AyuGram: where the message list is, in this widget's coordinates.
+	[[nodiscard]] QRect ayuScrollGeometry() const;
 	QRect floatPlayerAvailableRect() override;
 
 	// ListDelegate interface.

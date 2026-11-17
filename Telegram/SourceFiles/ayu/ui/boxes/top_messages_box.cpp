@@ -44,9 +44,9 @@
 #include <QtCore/QFileInfo>
 #include <QtCore/QLocale>
 #include <QtCore/QSaveFile>
-#include <QtWidgets/QAbstractScrollArea>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QLineEdit>
+#include <QtWidgets/QPlainTextEdit>
 #include <QtWidgets/QTextEdit>
 #include <QtGui/QTextDocument>
 #include <QtGui/QKeyEvent>
@@ -606,30 +606,19 @@ bool ResultsBar::inOurChat() const {
 
 void ResultsBar::updatePlacement() {
 	const auto parent = parentWidget();
-	const auto area = inOurChat()
-		? _controller->content()->ayuChatAreaWidget()
-		: nullptr;
-	auto scroll = (QAbstractScrollArea*)nullptr;
-	if (area) {
-		for (const auto child : area->findChildren<QAbstractScrollArea*>(
-				Qt::FindDirectChildrenOnly)) {
-			if (child->isVisible()
-				&& (!scroll || child->height() > scroll->height())) {
-				scroll = child;
-			}
-		}
-	}
-	if (!scroll || !parent) {
+	const auto list = inOurChat()
+		? _controller->content()->ayuChatListRect()
+		: QRect();
+	if (list.isEmpty() || !parent) {
 		hide();
 		return;
 	}
 	const auto skip = st::historyComposeButton.height / 3;
-	const auto origin = scroll->mapTo(parent, QPoint());
 	const auto width = std::min(
-		scroll->width() - 2 * skip,
+		list.width() - 2 * skip,
 		st::boxWideWidth + st::boxWideWidth / 3);
-	const auto left = origin.x() + (scroll->width() - width) / 2;
-	const auto top = origin.y() + scroll->height() - height() - skip;
+	const auto left = list.x() + (list.width() - width) / 2;
+	const auto top = list.y() + list.height() - height() - skip;
 	if (this->width() != width) {
 		resize(width, height());
 	}
@@ -847,9 +836,6 @@ void TopMessagesBox(
 			int index,
 			SortBy sort) {
 		controller->window().activate();
-		if (const auto window = box->window()) {
-			window->hide();
-		}
 		ShowResultsBar(
 			controller,
 			peer,
@@ -926,40 +912,31 @@ void TopMessagesBox(
 				crl::on_main(box, [=] { browse(*navItems, 0, sort); });
 			});
 			const auto pageFirst = first;
-			const auto pageTill = till;
 			Settings::AddButtonWithLabel(
 				results,
-				rpl::single(u"Open this page as a chat"_q),
-				rpl::single(u"#"_q
-					+ FormatNumber(first + 1)
-					+ QString::fromUtf8("\xE2\x80\x93")
-					+ FormatNumber(till)),
+				rpl::single(u"Open as a chat, most first"_q),
+				rpl::single(u"from #"_q + FormatNumber(first + 1)),
 				st::settingsButtonNoIcon
 			)->addClickHandler([=] {
 				crl::on_main(box, [=] {
 					auto ids = std::vector<FullMsgId>();
-					ids.reserve(pageTill - pageFirst);
-					for (auto i = pageFirst; i < pageTill
-						&& i < int(navItems->size()); ++i) {
+					// Everything from this page on; the view loads 100
+					// at a time as you scroll.
+					for (auto i = pageFirst; i < int(navItems->size()); ++i) {
 						ids.push_back(FullMsgId(peer->id, (*navItems)[i].id));
 					}
 					if (ids.empty()) {
 						return;
 					}
 					controller->window().activate();
-					if (const auto window = box->window()) {
-						window->hide();
-					}
 					controller->showSection(
 						std::make_shared<TopMessagesView::SectionMemento>(
 							peer,
 							std::move(ids),
 							u"Top by "_q
 								+ SortName(sort)
-								+ u" #"_q
-								+ FormatNumber(pageFirst + 1)
-								+ QString::fromUtf8("\xE2\x80\x93")
-								+ FormatNumber(pageTill)));
+								+ u" from #"_q
+								+ FormatNumber(pageFirst + 1)));
 				});
 			});
 		}
@@ -1224,12 +1201,93 @@ void TopMessagesBox(
 	box->addButton(tr::lng_close(), [=] { box->closeBox(); });
 }
 
+// T (when not typing) or Ctrl+T brings the Top messages window back.
+bool ReshowTopMessages() {
+	const auto active = QApplication::activeWindow();
+	if (!active) {
+		return false;
+	}
+	auto target = (Window::SessionController*)nullptr;
+	auto key = CacheKey();
+	for (const auto &[controller, open] : Windows()) {
+		const auto panel = open.stack->currentPanel();
+		if (active == controller->widget()->window()
+			|| (panel && active == panel->window())) {
+			target = controller.get();
+			key = open.key;
+			break;
+		}
+	}
+	if (!target) {
+		return false;
+	}
+	const auto peer = target->session().data().peerLoaded(key.first);
+	if (!peer) {
+		return false;
+	}
+	const auto controller = not_null<Window::SessionController*>(target);
+	const auto root = key.second;
+	crl::on_main(controller.get(), [=] {
+		ShowTopMessagesWindow(controller, peer, root);
+	});
+	return true;
+}
+
+class ReshowShortcut final : public QObject {
+public:
+	using QObject::QObject;
+
+protected:
+	bool eventFilter(QObject *o, QEvent *e) override {
+		if (e->type() != QEvent::KeyPress) {
+			return false;
+		}
+		const auto key = static_cast<QKeyEvent*>(e);
+		if (key->key() != Qt::Key_T || key->isAutoRepeat()) {
+			return false;
+		}
+		const auto mods = key->modifiers()
+			& ~(Qt::KeypadModifier | Qt::ShiftModifier);
+		const auto plain = (mods == Qt::NoModifier);
+#ifdef Q_OS_MAC
+		const auto ctrl = (mods == Qt::MetaModifier);
+#else // Q_OS_MAC
+		const auto ctrl = (mods == Qt::ControlModifier);
+#endif // Q_OS_MAC
+		if (!plain && !ctrl) {
+			return false;
+		}
+		if (plain && (key->modifiers() & Qt::ShiftModifier)) {
+			return false;
+		}
+		if (plain) {
+			const auto focus = QApplication::focusWidget();
+			if (qobject_cast<QTextEdit*>(focus)
+				|| qobject_cast<QLineEdit*>(focus)
+				|| qobject_cast<QPlainTextEdit*>(focus)) {
+				return false;
+			}
+		}
+		return ReshowTopMessages();
+	}
+
+};
+
+void InstallReshowShortcut() {
+	static auto installed = false;
+	if (!installed) {
+		installed = true;
+		qApp->installEventFilter(new ReshowShortcut(qApp));
+	}
+}
+
 } // namespace
 
 void ShowTopMessagesWindow(
 		not_null<Window::SessionController*> controller,
 		not_null<PeerData*> peer,
 		MsgId topicRootId) {
+	InstallReshowShortcut();
 	const auto key = CacheKey(peer->id, topicRootId);
 	auto &windows = Windows();
 	auto i = windows.find(controller);

@@ -6804,6 +6804,10 @@ bool HistoryWidget::eventFilter(QObject *obj, QEvent *e) {
 	return RpWidget::eventFilter(obj, e);
 }
 
+QRect HistoryWidget::ayuScrollGeometry() const {
+	return _scroll ? _scroll->geometry() : QRect();
+}
+
 bool HistoryWidget::floatPlayerHandleWheelEvent(QEvent *e) {
 	return _peer ? _scroll->viewportEvent(e) : false;
 }

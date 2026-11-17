@@ -229,6 +229,8 @@ public:
 
 	// AyuGram: the chat area shown right now (history or a section).
 	[[nodiscard]] QWidget *ayuChatAreaWidget() const;
+	// AyuGram: the message list area of the shown chat, in our coordinates.
+	[[nodiscard]] QRect ayuChatListRect() const;
 
 	void dialogsCancelled();
 	void toggleFiltersMenu(bool value) const;

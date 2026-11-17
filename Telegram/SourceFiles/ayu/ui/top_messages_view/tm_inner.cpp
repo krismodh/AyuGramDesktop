@@ -54,6 +54,7 @@
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/popup_menu.h"
 #include "window/window_session_controller.h"
+#include "media/view/media_view_overlay_widget.h"
 
 #include <QtGui/QClipboard>
 #include <QtWidgets/QApplication>
@@ -554,6 +555,7 @@ void InnerWidget::elementSubmitAddPollOption(FullMsgId context) {
 void InnerWidget::elementOpenPhoto(
 	not_null<PhotoData*> photo,
 	FullMsgId context) {
+	Media::View::SetNextOpenCustomOrder(mediaOrder());
 	_controller->openPhoto(photo, {context});
 }
 
@@ -561,6 +563,7 @@ void InnerWidget::elementOpenDocument(
 	not_null<DocumentData*> document,
 	FullMsgId context,
 	bool showInMediaView) {
+	Media::View::SetNextOpenCustomOrder(mediaOrder());
 	_controller->openDocument(document, showInMediaView, {context});
 }
 
@@ -732,15 +735,24 @@ void InnerWidget::applySearch(const QString &query) {
 }
 
 void InnerWidget::preloadMore(Direction direction) {
-	// All results are loaded in one go, the first time the top is reached.
-	if (direction == Direction::Down) {
-		_downLoaded = true;
+	// Results go top (best) to bottom, so more are loaded below as you
+	// scroll down; nothing is ever above the first result.
+	_upLoaded = true;
+	if (direction == Direction::Up && _loadedCount > 0) {
 		return;
 	}
-	if (_upLoaded || _loadingUp) {
+	loadNextChunk();
+}
+
+void InnerWidget::loadNextChunk() {
+	constexpr auto kChunk = 100;
+	if (_loadingChunk || _loadedCount >= int(_ids.size())) {
+		_downLoaded = (_loadedCount >= int(_ids.size()));
 		return;
 	}
-	_loadingUp = true;
+	_loadingChunk = true;
+	const auto from = _loadedCount;
+	const auto till = std::min(from + kChunk, int(_ids.size()));
 
 	const auto reqNum = ++_loadRequestNum;
 	const auto weak = base::make_weak(this);
@@ -751,13 +763,13 @@ void InnerWidget::preloadMore(Direction direction) {
 			return;
 		}
 		*finished = true;
-		_loadingUp = false;
-		addRealMessages();
+		_loadingChunk = false;
+		addRealMessages(from, till);
 	};
 
 	auto &owner = session().data();
-	for (const auto &id : _ids) {
-		if (!owner.message(id)) {
+	for (auto i = from; i != till; ++i) {
+		if (!owner.message(_ids[i])) {
 			++*left;
 		}
 	}
@@ -765,7 +777,8 @@ void InnerWidget::preloadMore(Direction direction) {
 		finish();
 		return;
 	}
-	for (const auto &id : _ids) {
+	for (auto i = from; i != till; ++i) {
+		const auto id = _ids[i];
 		if (owner.message(id)) {
 			continue;
 		}
@@ -782,12 +795,17 @@ void InnerWidget::preloadMore(Direction direction) {
 	base::call_delayed(15000, this, [=] { finish(); });
 }
 
-void InnerWidget::addRealMessages() {
+void InnerWidget::addRealMessages(int from, int till) {
+	const auto first = (_loadedCount == 0);
+	_loadedCount = till;
 	_upLoaded = true;
+	_downLoaded = (_loadedCount >= int(_ids.size()));
+
+	// _items.front() is drawn at the bottom: lower-ranked results go in
+	// front of what is already there, the best of them closest to the top.
 	auto &owner = session().data();
-	auto added = 0;
-	// _items.back() is drawn at the top, so the best result goes last.
-	for (auto i = int(_ids.size()) - 1; i >= 0; --i) {
+	auto added = std::vector<OwnedItem>();
+	for (auto i = till - 1; i >= from; --i) {
 		const auto item = owner.message(_ids[i]);
 		if (!item || _itemsByData.find(item) != end(_itemsByData)) {
 			continue;
@@ -795,18 +813,32 @@ void InnerWidget::addRealMessages() {
 		auto owned = OwnedItem(this, item);
 		_messageIds.emplace(uint64(_ids[i].msg.bare));
 		_itemsByData.emplace(item, owned.get());
-		_items.push_back(std::move(owned));
-		++added;
+		added.push_back(std::move(owned));
 	}
-	if (added) {
+	const auto count = int(added.size());
+	if (count) {
+		for (auto &item : _items) {
+			added.push_back(std::move(item));
+		}
+		_items = std::move(added);
 		updateMinMaxIds();
-		itemsAdded(Direction::Up, added);
 		_upLoaded = true;
-		// Start at the top, on the most popular message.
-		_scrollToSignal.fire(0);
+		itemsAdded(Direction::Down, count);
+		if (first) {
+			// Start at the top, on the most popular message.
+			_scrollToSignal.fire(0);
+		}
 	}
 	updateEmptyText();
 	update();
+	if (!count && !_downLoaded) {
+		// Nothing usable in this chunk: try the next one.
+		crl::on_main(this, [=] { loadNextChunk(); });
+	}
+}
+
+std::vector<FullMsgId> InnerWidget::mediaOrder() const {
+	return _ids;
 }
 
 void InnerWidget::removeRealItem(not_null<const HistoryItem*> item) {

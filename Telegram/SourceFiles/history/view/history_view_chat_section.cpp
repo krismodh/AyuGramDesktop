@@ -4662,6 +4662,10 @@ void ChatWidget::showFinishedHook() {
 	updateControlsVisibility();
 }
 
+QRect ChatWidget::ayuScrollGeometry() const {
+	return _scroll ? _scroll->geometry() : QRect();
+}
+
 bool ChatWidget::floatPlayerHandleWheelEvent(QEvent *e) {
 	return _scroll->viewportEvent(e);
 }

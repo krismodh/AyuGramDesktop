@@ -1653,6 +1653,13 @@ void OverlayWidget::updateDocSize() {
 }
 
 void OverlayWidget::refreshNavVisibility() {
+	if (!_stories && !_customOrder.empty()) {
+		if (const auto index = customIndex(); index >= 0) {
+			_leftNavVisible = customHasMore(index, -1);
+			_rightNavVisible = customHasMore(index, 1);
+			return;
+		}
+	}
 	if (_stories) {
 		_leftNavVisible = _stories->subjumpAvailable(-1);
 		_rightNavVisible = _stories->subjumpAvailable(1);
@@ -4592,7 +4599,22 @@ void OverlayWidget::activate() {
 	}
 }
 
+namespace {
+
+std::vector<FullMsgId> &PendingCustomOrder() {
+	static auto result = std::vector<FullMsgId>();
+	return result;
+}
+
+} // namespace
+
+void SetNextOpenCustomOrder(std::vector<FullMsgId> ids) {
+	PendingCustomOrder() = std::move(ids);
+}
+
 void OverlayWidget::show(OpenRequest request) {
+	_customOrder = base::take(PendingCustomOrder());
+	_customLoading = false;
 	const auto story = request.story();
 	const auto document = story ? story->document() : request.document();
 	const auto photo = story ? story->photo() : request.photo();
@@ -8019,11 +8041,126 @@ void OverlayWidget::setSession(not_null<Main::Session*> session) {
 bool OverlayWidget::moveToNext(int delta) {
 	if (_stories) {
 		return _stories->subjumpFor(delta);
+	} else if (!_customOrder.empty() && customIndex() >= 0) {
+		return customMoveToNext(delta);
 	} else if (!_index) {
 		return false;
 	}
 	auto newIndex = *_index + delta;
 	return moveToEntity(entityByIndex(newIndex), delta);
+}
+
+int OverlayWidget::customIndex() const {
+	if (!_message) {
+		return -1;
+	}
+	const auto id = _message->fullId();
+	const auto i = ranges::find(_customOrder, id);
+	return (i == end(_customOrder))
+		? -1
+		: int(i - begin(_customOrder));
+}
+
+bool OverlayWidget::customIsMedia(not_null<HistoryItem*> item) const {
+	const auto media = item->media();
+	if (!media) {
+		return false;
+	} else if (media->photo()) {
+		return true;
+	} else if (const auto document = media->document()) {
+		return !document->sticker()
+			&& (document->isVideoFile()
+				|| document->isAnimation()
+				|| document->isGifv()
+				|| document->isImage());
+	}
+	return false;
+}
+
+bool OverlayWidget::customHasMore(int index, int step) const {
+	if (!_session) {
+		return false;
+	}
+	auto &owner = _session->data();
+	for (auto i = index + step; i >= 0 && i < int(_customOrder.size()); i += step) {
+		const auto item = owner.message(_customOrder[i]);
+		if (!item || customIsMedia(item)) {
+			return true; // Not loaded yet counts as maybe.
+		}
+	}
+	return false;
+}
+
+void OverlayWidget::customRequest(int from, int step, Fn<void()> done) {
+	if (!_session) {
+		return;
+	}
+	auto &owner = _session->data();
+	auto ids = std::vector<FullMsgId>();
+	for (auto i = from; i >= 0 && i < int(_customOrder.size()) && ids.size() < 20; i += step) {
+		if (!owner.message(_customOrder[i])) {
+			ids.push_back(_customOrder[i]);
+		}
+	}
+	if (ids.empty()) {
+		if (done) {
+			done();
+		}
+		return;
+	}
+	const auto left = std::make_shared<int>(int(ids.size()));
+	for (const auto &id : ids) {
+		_session->api().requestMessageData(
+			owner.peer(id.peer),
+			id.msg,
+			[=] {
+				if (--*left == 0 && done) {
+					done();
+				}
+			});
+	}
+}
+
+bool OverlayWidget::customMoveToNext(int delta) {
+	const auto index = customIndex();
+	if (index < 0 || !_session || !delta) {
+		return false;
+	}
+	auto &owner = _session->data();
+	const auto step = (delta < 0) ? -1 : 1;
+	for (auto i = index + step; i >= 0 && i < int(_customOrder.size()); i += step) {
+		const auto item = owner.message(_customOrder[i]);
+		if (!item) {
+			// Not loaded yet: fetch the next few, then step again.
+			if (!_customLoading) {
+				_customLoading = true;
+				const auto current = _customOrder[index];
+				customRequest(i, step, crl::guard(_widget, [=] {
+					_customLoading = false;
+					if (_message && _message->fullId() == current) {
+						moveToNext(delta);
+					}
+				}));
+			}
+			return true;
+		} else if (!customIsMedia(item)) {
+			continue;
+		}
+		const auto media = item->media();
+		auto entity = Entity();
+		if (const auto photo = media->photo()) {
+			entity.data = not_null<PhotoData*>(photo);
+		} else {
+			entity.data = not_null<DocumentData*>(media->document());
+		}
+		entity.item = item;
+		entity.topicRootId = item->topicRootId();
+		const auto result = moveToEntity(entity, 0);
+		// Keep a few ahead loaded so stepping stays quick.
+		customRequest(i + step, step, nullptr);
+		return result;
+	}
+	return false;
 }
 
 bool OverlayWidget::moveToEntity(const Entity &entity, int preloadDelta) {
