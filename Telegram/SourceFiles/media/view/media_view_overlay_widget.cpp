@@ -9200,35 +9200,8 @@ void OverlayWidget::openInIina() {
 	if (_streamed && !_streamed->instance.player().paused()) {
 		playbackPauseResume();
 	}
-	using Entry = std::pair<FullMsgId, not_null<DocumentData*>>;
-	auto files = std::vector<Entry>();
-	const auto group = _message
-		? _message->history()->owner().groups().find(_message)
-		: nullptr;
-	if (group) {
-		const auto &items = group->items;
-		const auto current = ranges::find(items, not_null<HistoryItem*>(_message));
-		const auto start = (current != end(items))
-			? int(current - begin(items))
-			: 0;
-		for (auto i = 0; i != int(items.size()); ++i) {
-			const auto item = items[(start + i) % items.size()];
-			const auto media = item->media();
-			const auto document = media ? media->document() : nullptr;
-			if (document
-				&& !item->forbidsSaving()
-				&& DocumentOpenWithClickHandler::CanOpenInIina(document)) {
-				files.emplace_back(
-					item->fullId(),
-					not_null<DocumentData*>(document));
-			}
-		}
-	}
-	if (files.size() > 1) {
-		DocumentOpenWithClickHandler::OpenListInIina(std::move(files));
-	} else {
-		DocumentOpenWithClickHandler::OpenInIina(fileOrigin(), _document);
-	}
+	// Only ever the one video, never the rest of an album.
+	DocumentOpenWithClickHandler::OpenInIina(fileOrigin(), _document);
 }
 
 void OverlayWidget::toggleOriginalSize() {

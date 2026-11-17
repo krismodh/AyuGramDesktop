@@ -563,7 +563,7 @@ void ResultsBar::relayout() {
 }
 
 bool ResultsBar::arrowsAllowed() const {
-	if (isHidden() || QApplication::activeWindow() != window()) {
+	if (isHidden() || !inOurChat() || QApplication::activeWindow() != window()) {
 		return false;
 	}
 	// Keep the arrows for typing: only take them over an empty message box.
@@ -594,6 +594,11 @@ bool ResultsBar::eventFilter(QObject *o, QEvent *e) {
 }
 
 bool ResultsBar::inOurChat() const {
+	// The sorted chat has its own Up / Down, so the bar stays out of it.
+	if (dynamic_cast<TopMessagesView::Widget*>(
+			_controller->content()->ayuChatAreaWidget())) {
+		return false;
+	}
 	const auto key = _controller->activeChatCurrent();
 	if (key.peer() != _peer) {
 		return false;

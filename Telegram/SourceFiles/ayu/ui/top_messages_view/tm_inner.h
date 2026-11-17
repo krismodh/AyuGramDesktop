@@ -230,6 +230,8 @@ private:
 	void updateEmptyText();
 	void paintEmpty(Painter &p, not_null<const Ui::ChatStyle*> st);
 	void loadNextChunk();
+	void resetAll();
+	void stepTo(int direction);
 	void addRealMessages(int from, int till);
 	[[nodiscard]] std::vector<FullMsgId> mediaOrder() const;
 	void removeRealItem(not_null<const HistoryItem*> item);
@@ -272,6 +274,8 @@ private:
 	const std::vector<FullMsgId> _ids;
 	int _loadedCount = 0;
 	bool _loadingChunk = false;
+	int _restoreCount = 0;
+	int _restoreScrollTop = -1;
 	const not_null<History*> _history;
 	MTP::Sender _api;
 

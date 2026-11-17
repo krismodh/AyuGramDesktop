@@ -30,6 +30,8 @@
 #include "data/data_media_types.h"
 #include "data/data_photo.h"
 #include "data/data_photo_media.h"
+#include "data/data_forum.h"
+#include "data/data_forum_topic.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
 #include "history/history.h"
@@ -657,58 +659,61 @@ bool InnerWidget::elementHideTopicButton(not_null<const Element*> view) {
 	return false;
 }
 
-void InnerWidget::saveState(not_null<SectionMemento*> memento) {
-	if (false) {
-		memento->setItems({}, {}, false, true);
-		memento->setSearchQuery(base::take(_searchQuery));
-		_items.clear();
-		_messageIds.clear();
-		_itemsByData.clear();
-		_upLoaded = false;
-		_downLoaded = true;
-		return;
+void InnerWidget::resetAll() {
+	++_loadRequestNum;
+	_loadingChunk = false;
+	_loadedCount = 0;
+	_visibleTopItem = nullptr;
+	_scrollDateLastItem = nullptr;
+	_mouseActionItem = nullptr;
+	_mouseAction = MouseAction::None;
+	_selectedItem = nullptr;
+	const auto ours = [&](Element *view) {
+		return view && view->delegate().get() == this;
+	};
+	if (ours(Element::Hovered())) {
+		Element::Hovered(nullptr);
 	}
+	if (ours(Element::HoveredLink())) {
+		Element::HoveredLink(nullptr);
+	}
+	if (ours(Element::Pressed())) {
+		Element::Pressed(nullptr);
+	}
+	if (ours(Element::PressedLink())) {
+		Element::PressedLink(nullptr);
+	}
+	if (ours(Element::Moused())) {
+		Element::Moused(nullptr);
+	}
+	_itemsByData.clear();
+	_items.clear();
+	_messageIds.clear();
+	_itemDates.clear();
+	_upLoaded = true;
+	_downLoaded = true;
+}
 
-	for (auto &item : _items) {
-		item.clearView();
-	}
-	memento->setItems(
-		base::take(_items),
-		base::take(_messageIds),
-		_upLoaded,
-		_downLoaded);
+void InnerWidget::saveState(not_null<SectionMemento*> memento) {
+	// Keep only how far we got: the messages are loaded again on return,
+	// so nothing stale (or deleted) is ever carried over.
+	memento->setItems({}, {}, true, false);
+	memento->setLoadedCount(_loadedCount);
 	memento->setSearchQuery(base::take(_searchQuery));
-	base::take(_itemsByData);
-	_upLoaded = _downLoaded = true; // Don't load or handle anything anymore.
+	resetAll();
 }
 
 void InnerWidget::restoreState(not_null<SectionMemento*> memento) {
-	if (false) {
-		_items.clear();
-		_messageIds.clear();
-		_itemsByData.clear();
-		_itemDates.clear();
-		_upLoaded = false;
-		_downLoaded = true;
-		_searchQuery = memento->takeSearchQuery();
-		updateMinMaxIds();
-		updateEmptyText();
-		updateSize();
-		preloadMore(Direction::Up);
-		return;
-	}
-
-	_items = memento->takeItems();
-	for (auto &item : _items) {
-		item.refreshView(this);
-		_itemsByData.emplace(item->data(), item.get());
-	}
-	_messageIds = memento->takeMessageIds();
-	_upLoaded = memento->upLoaded();
-	_downLoaded = memento->downLoaded();
+	resetAll();
+	_restoreCount = memento->loadedCount();
+	_restoreScrollTop = memento->getScrollTop();
 	_searchQuery = memento->takeSearchQuery();
+	_upLoaded = true;
+	_downLoaded = _ids.empty();
 	updateMinMaxIds();
+	updateEmptyText();
 	updateSize();
+	loadNextChunk();
 }
 
 void InnerWidget::applySearch(const QString &query) {
@@ -774,7 +779,8 @@ void InnerWidget::loadNextChunk() {
 		}
 	}
 	if (!*left) {
-		finish();
+		// Deferred, so a chunk is never added in the middle of a relayout.
+		crl::on_main(this, finish);
 		return;
 	}
 	for (auto i = from; i != till; ++i) {
@@ -824,16 +830,37 @@ void InnerWidget::addRealMessages(int from, int till) {
 		updateMinMaxIds();
 		_upLoaded = true;
 		itemsAdded(Direction::Down, count);
-		if (first) {
-			// Start at the top, on the most popular message.
-			_scrollToSignal.fire(0);
-		}
 	}
 	updateEmptyText();
 	update();
-	if (!count && !_downLoaded) {
-		// Nothing usable in this chunk: try the next one.
+	if (!_downLoaded && (!count || _loadedCount < _restoreCount)) {
+		// Nothing usable in this chunk, or coming back to where we were.
 		crl::on_main(this, [=] { loadNextChunk(); });
+	} else if (_restoreScrollTop >= 0) {
+		_scrollToSignal.fire(base::take(_restoreScrollTop));
+		_restoreScrollTop = -1;
+	} else if (first) {
+		// Start at the top, on the most popular message.
+		_scrollToSignal.fire(0);
+	}
+}
+
+void InnerWidget::stepTo(int direction) {
+	// Up / Down: jump so the previous / next message starts at the top.
+	auto target = -1;
+	for (const auto &item : ranges::views::reverse(_items)) {
+		const auto top = itemTop(item.get());
+		if (direction > 0 && top > _visibleTop + 2) {
+			target = top;
+			break;
+		} else if (direction < 0 && top < _visibleTop - 2) {
+			target = top;
+		}
+	}
+	if (target >= 0) {
+		_scrollToSignal.fire(target);
+	} else if (direction > 0) {
+		loadNextChunk();
 	}
 }
 
@@ -1119,6 +1146,12 @@ TextForMimeData InnerWidget::getSelectedText() const {
 }
 
 void InnerWidget::keyPressEvent(QKeyEvent *e) {
+	const auto mods = e->modifiers() & ~Qt::KeypadModifier;
+	if ((e->key() == Qt::Key_Up || e->key() == Qt::Key_Down)
+		&& mods == Qt::NoModifier) {
+		stepTo(e->key() == Qt::Key_Down ? 1 : -1);
+		return;
+	}
 	if (e->key() == Qt::Key_Escape) {
 		_controller->showBackFromStack();
 	} else if (e == QKeySequence::Copy && _selectedItem != nullptr) {
@@ -1200,11 +1233,18 @@ void InnerWidget::showContextMenu(QContextMenuEvent *e, bool showFromTouch) {
 			: Element::HoveredLink()) {
 		const auto itemId = target->data()->fullId();
 		const auto controller = _controller;
+		const auto topicRootId = target->data()->topicRootId();
+		const auto peer = target->data()->history()->peer;
 		_menu->addAction(u"Go to message"_q, [=] {
-			controller->showPeerHistory(
-				itemId.peer,
-				Window::SectionShow::Way::Forward,
-				itemId.msg);
+			const auto params = Window::SectionShow(
+				Window::SectionShow::Way::Forward);
+			if (topicRootId && peer->forum()) {
+				if (const auto topic = peer->forumTopicFor(topicRootId)) {
+					controller->showTopic(topic, itemId.msg, params);
+					return;
+				}
+			}
+			controller->showPeerHistory(peer, params, itemId.msg);
 		}, &st::menuIconShowInChat);
 	}
 
