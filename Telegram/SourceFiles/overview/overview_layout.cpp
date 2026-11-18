@@ -41,6 +41,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/sticker_set_box.h"
 #include "ui/effects/round_checkbox.h"
 #include "ui/effects/spoiler_mess.h"
+#include "ayu/ayu_settings.h"
 #include "ui/image/image.h"
 #include "ui/text/format_song_document_name.h"
 #include "ui/text/format_values.h"
@@ -389,12 +390,14 @@ Photo::Photo(
 	MediaOptions options)
 : ItemBase(delegate, parent)
 , _data(photo)
-, _spoiler((options.spoiler || parent->isMediaSensitive())
+, _spoiler(((options.spoiler || parent->isMediaSensitive())
+		&& !AyuSettings::getInstance().autoRevealSpoilers())
 	? std::make_unique<Ui::SpoilerAnimation>([=] {
 		delegate->repaintItem(this);
 	})
 	: nullptr)
-, _sensitiveSpoiler(parent->isMediaSensitive() ? 1 : 0)
+, _sensitiveSpoiler((parent->isMediaSensitive()
+		&& !AyuSettings::getInstance().autoRevealSpoilers()) ? 1 : 0)
 , _story(options.story)
 , _storyPinned(options.storyPinned)
 , _storyShowPinned(options.storyShowPinned)
@@ -657,12 +660,14 @@ Video::Video(
 , _videoCover(LookupVideoCover(video, parent))
 , _duration(Ui::FormatDurationText(_data->duration() / 1000))
 , _durationw(st::normalFont->width(_duration))
-, _spoiler((options.spoiler || parent->isMediaSensitive())
+, _spoiler(((options.spoiler || parent->isMediaSensitive())
+		&& !AyuSettings::getInstance().autoRevealSpoilers())
 	? std::make_unique<Ui::SpoilerAnimation>([=] {
 		delegate->repaintItem(this);
 	})
 	: nullptr)
-, _sensitiveSpoiler(parent->isMediaSensitive() ? 1 : 0)
+, _sensitiveSpoiler((parent->isMediaSensitive()
+		&& !AyuSettings::getInstance().autoRevealSpoilers()) ? 1 : 0)
 , _story(options.story)
 , _storyPinned(options.storyPinned)
 , _storyShowPinned(options.storyShowPinned)

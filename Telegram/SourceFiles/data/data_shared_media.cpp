@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_shared_media.h"
 
 #include "apiwrap.h"
+#include "ayu/ayu_settings.h"
 #include "core/crash_reports.h"
 #include "data/components/scheduled_messages.h"
 #include "data/data_document.h"
@@ -577,5 +578,110 @@ rpl::producer<SharedMediaWithLastSlice> SharedMediaWithLastReversedViewer(
 	) | rpl::map([](SharedMediaWithLastSlice &&slice) {
 		slice.reverse();
 		return std::move(slice);
+	});
+}
+
+namespace {
+
+// One window over both lists: only the stretch both have loaded is shown,
+// everything else counts as skipped, so scrolling loads more of each.
+SparseIdsMergedSlice MergeMediaSlices(
+		const SparseIdsMergedSlice::Key &key,
+		const SparseIdsMergedSlice &a,
+		const SparseIdsMergedSlice &b) {
+	const auto fa = a.fullCount();
+	const auto fb = b.fullCount();
+	if (!fa || !fb) {
+		return SparseIdsMergedSlice(key); // Wait until both are known.
+	}
+	auto lo = std::numeric_limits<int64>::min();
+	auto hi = std::numeric_limits<int64>::max();
+	const auto clip = [&](const SparseIdsMergedSlice &slice, int full) {
+		if (!full) {
+			return true; // Nothing of this kind at all.
+		} else if (!slice.size()) {
+			return false; // Not loaded yet.
+		}
+		const auto first = slice[0].msg.bare;
+		const auto last = slice[slice.size() - 1].msg.bare;
+		if (slice.skippedBefore() != 0) {
+			lo = std::max(lo, first);
+		}
+		if (slice.skippedAfter() != 0) {
+			hi = std::min(hi, last);
+		}
+		return true;
+	};
+	if (!clip(a, *fa) || !clip(b, *fb)) {
+		return SparseIdsMergedSlice(key);
+	} else if (lo > hi) {
+		return a;
+	}
+	auto ids = base::flat_set<MsgId>();
+	auto before = 0;
+	auto after = 0;
+	auto beforeKnown = true;
+	auto afterKnown = true;
+	const auto add = [&](const SparseIdsMergedSlice &slice) {
+		if (const auto skipped = slice.skippedBefore()) {
+			before += *skipped;
+		} else {
+			beforeKnown = false;
+		}
+		if (const auto skipped = slice.skippedAfter()) {
+			after += *skipped;
+		} else {
+			afterKnown = false;
+		}
+		for (auto i = 0, count = slice.size(); i != count; ++i) {
+			const auto id = slice[i].msg;
+			if (id.bare < lo) {
+				++before;
+			} else if (id.bare > hi) {
+				++after;
+			} else {
+				ids.emplace(id);
+			}
+		}
+	};
+	add(a);
+	add(b);
+	return SparseIdsMergedSlice(
+		key,
+		SparseIdsSlice(
+			ids,
+			*fa + *fb,
+			beforeKnown ? std::make_optional(before) : std::nullopt,
+			afterKnown ? std::make_optional(after) : std::nullopt),
+		std::nullopt);
+}
+
+} // namespace
+
+rpl::producer<SparseIdsMergedSlice> SharedMediaMergedWithGifsViewer(
+		not_null<Main::Session*> session,
+		SharedMediaMergedKey key,
+		int limitBefore,
+		int limitAfter) {
+	using Type = Storage::SharedMediaType;
+	if (key.type != Type::PhotoVideo
+		|| key.mergedKey.migratedPeerId
+		|| !AyuSettings::getInstance().mergeGifsIntoMedia()) {
+		return SharedMediaMergedViewer(
+			session,
+			std::move(key),
+			limitBefore,
+			limitAfter);
+	}
+	auto gifKey = key;
+	gifKey.type = Type::GIF;
+	const auto merged = key.mergedKey;
+	return rpl::combine(
+		SharedMediaMergedViewer(session, key, limitBefore, limitAfter),
+		SharedMediaMergedViewer(session, gifKey, limitBefore, limitAfter)
+	) | rpl::map([=](
+			const SparseIdsMergedSlice &a,
+			const SparseIdsMergedSlice &b) {
+		return MergeMediaSlices(merged, a, b);
 	});
 }
