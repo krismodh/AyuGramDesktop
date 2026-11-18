@@ -57,6 +57,9 @@
 #include "ui/effects/path_shift_gradient.h"
 #include "ui/text/text_utilities.h"
 #include "ui/widgets/popup_menu.h"
+#include "ui/widgets/buttons.h"
+#include "ui/widgets/labels.h"
+#include "styles/style_widgets.h"
 #include "window/window_session_controller.h"
 #include "media/view/media_view_overlay_widget.h"
 
@@ -286,6 +289,7 @@ InnerWidget::InnerWidget(
 		removeRealItem(item);
 	}, lifetime());
 
+	setupPageNav();
 	setMouseTracking(true);
 	_scrollDateHideTimer.setCallback([=]
 	{
@@ -470,12 +474,12 @@ void InnerWidget::checkPreloadMore() {
 }
 
 void InnerWidget::updateEmptyText() {
-	if (_preparing && _items.empty()) {
+	if (_pageLoading) {
 		_emptyText.setMarkedText(
 			st::defaultTextStyle,
-			Ui::Text::Semibold(u"Preparing messages\u2026 %1 / %2"_q
-				.arg(_prepareDone)
-				.arg(_prepareTotal)));
+			Ui::Text::Semibold(u"Loading page %1 of %2\u2026"_q
+				.arg(_page + 1)
+				.arg(pageCount())));
 		return;
 	}
 	// auto text = !_searchQuery.isEmpty()
@@ -672,8 +676,7 @@ bool InnerWidget::elementHideTopicButton(not_null<const Element*> view) {
 void InnerWidget::resetAll() {
 	++_loadRequestNum;
 	_loadingChunk = false;
-	_preparing = false;
-	_waitingForPrepare = false;
+	_pageLoading = false;
 	_loadedCount = 0;
 	_visibleTopItem = nullptr;
 	_scrollDateLastItem = nullptr;
@@ -710,14 +713,14 @@ void InnerWidget::saveState(not_null<SectionMemento*> memento) {
 	// Keep only how far we got: the messages are loaded again on return,
 	// so nothing stale (or deleted) is ever carried over.
 	memento->setItems({}, {}, true, false);
-	memento->setLoadedCount(_loadedCount);
+	memento->setLoadedCount(_page);
 	memento->setSearchQuery(base::take(_searchQuery));
 	resetAll();
 }
 
 void InnerWidget::restoreState(not_null<SectionMemento*> memento) {
 	resetAll();
-	_restoreCount = memento->loadedCount();
+	_page = std::clamp(memento->loadedCount(), 0, pageCount() - 1);
 	_restoreScrollTop = memento->getScrollTop();
 	_searchQuery = memento->takeSearchQuery();
 	_upLoaded = true;
@@ -755,24 +758,7 @@ void InnerWidget::preloadMore(Direction direction) {
 	// Results go top (best) to bottom, so more are loaded below as you
 	// scroll down; nothing is ever above the first result.
 	_upLoaded = true;
-	if (direction == Direction::Up && _loadedCount > 0) {
-		return;
-	}
 	loadNextChunk();
-}
-
-void InnerWidget::prepareAll() {
-	if (_preparing || _prepared) {
-		return;
-	}
-	_preparing = true;
-	_preparedUpTo = 0;
-	_prepareDone = 0;
-	_prepareTotal = int(_ids.size());
-	_upLoaded = _downLoaded = true; // So the progress text is painted.
-	updateEmptyText();
-	update();
-	prepareSegment(_loadRequestNum, 0);
 }
 
 void InnerWidget::fetchMessages(
@@ -838,27 +824,41 @@ void InnerWidget::fetchMessages(
 	}
 }
 
-void InnerWidget::prepareSegment(int reqNum, int from) {
-	// 100 ranked posts at a time: the posts, then the rest of their
-	// albums. The chat shows as soon as the first segment is ready and
-	// the rest keeps preparing ahead of scrolling.
-	constexpr auto kSegment = 100;
-	if (reqNum != _loadRequestNum) {
-		return;
-	}
-	const auto till = std::min(from + kSegment, int(_ids.size()));
+int InnerWidget::pageCount() const {
+	return std::max((int(_ids.size()) + kPageSize - 1) / kPageSize, 1);
+}
+
+void InnerWidget::showPage(int page) {
+	// One page of 100 at a time: fetch the posts, then the rest of their
+	// albums (two quick requests), then show the whole page at once.
+	// Only message data is fetched; files follow the usual auto-download.
+	page = std::clamp(page, 0, pageCount() - 1);
+	const auto restoreTop = _restoreScrollTop;
+	resetAll();
+	_restoreScrollTop = restoreTop;
+	_page = page;
+	_pageLoading = true;
+	_upLoaded = _downLoaded = true; // So the progress text is painted.
+	updateEmptyText();
+	updateSize();
+	update();
+
+	const auto reqNum = _loadRequestNum;
+	const auto from = page * kPageSize;
+	const auto till = std::min(from + kPageSize, int(_ids.size()));
 	if (from >= till) {
-		_preparing = false;
-		_prepared = true;
-		_preparedUpTo = int(_ids.size());
+		_pageLoading = false;
 		updateEmptyText();
-		loadNextChunk();
+		update();
 		return;
 	}
-	auto primaries = std::vector<FullMsgId>(
+	auto posts = std::vector<FullMsgId>(
 		_ids.begin() + from,
 		_ids.begin() + till);
-	fetchMessages(std::move(primaries), reqNum, crl::guard(this, [=] {
+	fetchMessages(std::move(posts), reqNum, crl::guard(this, [=] {
+		if (reqNum != _loadRequestNum) {
+			return;
+		}
 		auto &owner = session().data();
 		auto albums = std::vector<FullMsgId>();
 		auto seen = base::flat_set<MessageGroupId>();
@@ -878,132 +878,112 @@ void InnerWidget::prepareSegment(int reqNum, int from) {
 			}
 		}
 		fetchMessages(std::move(albums), reqNum, crl::guard(this, [=] {
-			_preparedUpTo = till;
-			for (auto i = from; i != till; ++i) {
-				if (session().data().message(_ids[i])) {
-					++_prepareDone;
-				}
+			if (reqNum != _loadRequestNum) {
+				return;
 			}
-			if (_items.empty()) {
-				updateEmptyText();
-				update();
-			}
-			if (_waitingForPrepare) {
-				_waitingForPrepare = false;
-				loadNextChunk();
-			}
-			prepareSegment(reqNum, till);
+			_pageLoading = false;
+			addRealMessages(from, till);
 		}));
 	}));
 }
 
-void InnerWidget::loadNextChunk() {
-	constexpr auto kChunk = 100;
-	if (!_prepared) {
-		prepareAll();
-		const auto wanted = std::min(_loadedCount + kChunk, int(_ids.size()));
-		if (_loadingChunk || _preparedUpTo < wanted) {
-			_waitingForPrepare = true;
-			return;
-		}
-	}
-	if (_loadingChunk || _loadedCount >= int(_ids.size())) {
-		_downLoaded = (_loadedCount >= int(_ids.size()));
-		return;
-	}
-	_loadingChunk = true;
-	const auto from = _loadedCount;
-	const auto till = std::min(from + kChunk, int(_ids.size()));
-
-	const auto reqNum = ++_loadRequestNum;
-	const auto weak = base::make_weak(this);
-	const auto left = std::make_shared<int>(0);
-	const auto finished = std::make_shared<bool>(false);
-	const auto finish = [=] {
-		if (!weak || *finished || reqNum != _loadRequestNum) {
-			return;
-		}
-		*finished = true;
-		// Albums: the ranked id is one photo, so fetch the rest of each
-		// album (consecutive ids, at most 10) before showing the chunk.
-		auto &owner = session().data();
-		auto seen = base::flat_set<MessageGroupId>();
-		auto missing = std::vector<FullMsgId>();
-		for (auto i = from; i != (till <= _preparedUpTo ? from : till); ++i) {
-			const auto item = owner.message(_ids[i]);
-			if (!item || !item->groupId() || seen.contains(item->groupId())) {
-				continue;
+void InnerWidget::setupPageNav() {
+	// "« First  ‹ Prev   Page X of Y   Next ›  Last »" after the last post.
+	constexpr auto kHeight = 72;
+	_pageNav = Ui::CreateChild<Ui::RpWidget>(this);
+	_pageNav->resize(width(), kHeight);
+	_pageNav->hide();
+	const auto make = [&](const QString &text, Fn<int()> target) {
+		const auto button = Ui::CreateChild<Ui::RoundButton>(
+			_pageNav,
+			rpl::single(text),
+			st::defaultLightButton);
+		button->setTextTransform(Ui::RoundButton::TextTransform::NoTransform);
+		button->setClickedCallback(crl::guard(this, [=] {
+			const auto page = target();
+			if (page != _page && !_pageLoading) {
+				_restoreScrollTop = 0;
+				showPage(page);
 			}
-			seen.emplace(item->groupId());
-			for (auto d = -9; d <= 9; ++d) {
-				const auto id = item->id + d;
-				if (d && id > 0 && !owner.message(item->history()->peer->id, id)) {
-					missing.push_back({ item->history()->peer->id, id });
-				}
-			}
-		}
-		if (missing.empty()) {
-			_loadingChunk = false;
-			addRealMessages(from, till);
-			return;
-		}
-		const auto albumLeft = std::make_shared<int>(int(missing.size()));
-		const auto albumDone = std::make_shared<bool>(false);
-		const auto show = [=] {
-			if (!weak || *albumDone || reqNum != _loadRequestNum) {
-				return;
-			}
-			*albumDone = true;
-			_loadingChunk = false;
-			addRealMessages(from, till);
-		};
-		for (const auto &id : missing) {
-			session().api().requestMessageData(
-				owner.peer(id.peer),
-				id.msg,
-				[=] {
-					if (--*albumLeft <= 0) {
-						show();
-					}
-				});
-		}
-		base::call_delayed(10000, this, show);
+		}));
+		return button;
 	};
+	_pageFirst = make(u"« First"_q, [] { return 0; });
+	_pagePrev = make(u"‹ Prev"_q, [=] { return std::max(_page - 1, 0); });
+	_pageNext = make(u"Next ›"_q, [=] {
+		return std::min(_page + 1, pageCount() - 1);
+	});
+	_pageLast = make(u"Last »"_q, [=] { return pageCount() - 1; });
+	_pageNavLabel = Ui::CreateChild<Ui::FlatLabel>(
+		_pageNav,
+		QString(),
+		st::defaultFlatLabel);
+	_pageNav->paintRequest() | rpl::on_next([=] {
+		auto p = QPainter(_pageNav);
+		auto hq = PainterHighQualityEnabler(p);
+		p.setPen(Qt::NoPen);
+		p.setBrush(st::windowBg);
+		const auto inner = _pageNav->rect().marginsRemoved(
+			{ 12, 10, 12, 10 });
+		p.drawRoundedRect(inner, 12, 12);
+	}, _pageNav->lifetime());
+	_pageNav->widthValue() | rpl::on_next([=] {
+		refreshPageNav();
+	}, _pageNav->lifetime());
+}
 
-	auto &owner = session().data();
-	for (auto i = from; i != till; ++i) {
-		if (!owner.message(_ids[i])) {
-			++*left;
-		}
-	}
-	if (!*left) {
-		// Deferred, so a chunk is never added in the middle of a relayout.
-		crl::on_main(this, finish);
+void InnerWidget::refreshPageNav() {
+	if (!_pageNav) {
 		return;
 	}
-	for (auto i = from; i != till; ++i) {
-		const auto id = _ids[i];
-		if (owner.message(id)) {
-			continue;
+	const auto count = pageCount();
+	const auto from = _page * kPageSize + 1;
+	const auto till = std::min((_page + 1) * kPageSize, int(_ids.size()));
+	_pageNavLabel->setText(u"Page %1 of %2  (#%3–%4)"_q
+		.arg(_page + 1)
+		.arg(count)
+		.arg(from)
+		.arg(till));
+	_pageNavLabel->resizeToNaturalWidth(_pageNav->width());
+	const auto hasPrev = (_page > 0);
+	const auto hasNext = (_page + 1 < count);
+	_pageFirst->setVisible(hasPrev);
+	_pagePrev->setVisible(hasPrev);
+	_pageNext->setVisible(hasNext);
+	_pageLast->setVisible(hasNext);
+
+	constexpr auto kGap = 8;
+	auto widgets = std::vector<Ui::RpWidget*>();
+	for (const auto w : std::initializer_list<Ui::RpWidget*>{
+			_pageFirst, _pagePrev, _pageNavLabel, _pageNext, _pageLast }) {
+		if (!w->isHidden()) {
+			widgets.push_back(w);
 		}
-		session().api().requestMessageData(
-			owner.peer(id.peer),
-			id.msg,
-			[=] {
-				if (--*left <= 0) {
-					finish();
-				}
-			});
 	}
-	// Show whatever arrived even if some requests never answer.
-	base::call_delayed(15000, this, [=] { finish(); });
+	auto total = 0;
+	for (const auto w : widgets) {
+		total += w->width();
+	}
+	total += kGap * (int(widgets.size()) - 1);
+	auto x = std::max((_pageNav->width() - total) / 2, 16);
+	for (const auto w : widgets) {
+		w->moveToLeft(x, (_pageNav->height() - w->height()) / 2);
+		x += w->width() + kGap;
+	}
+	_pageNav->update();
+}
+
+void InnerWidget::loadNextChunk() {
+	if (_items.empty() && !_pageLoading) {
+		showPage(_page);
+	}
 }
 
 void InnerWidget::addRealMessages(int from, int till) {
-	const auto first = (_loadedCount == 0);
+	const auto first = true;
 	_loadedCount = till;
 	_upLoaded = true;
-	_downLoaded = (_loadedCount >= int(_ids.size()));
+	_downLoaded = true;
 
 	// _items.front() is drawn at the bottom: lower-ranked results go in
 	// front of what is already there, the best of them closest to the top.
@@ -1036,11 +1016,11 @@ void InnerWidget::addRealMessages(int from, int till) {
 		itemsAdded(Direction::Down, count);
 	}
 	updateEmptyText();
+	if (!count) {
+		updateSize();
+	}
 	update();
-	if (!_downLoaded && (!count || _loadedCount < _restoreCount)) {
-		// Nothing usable in this chunk, or coming back to where we were.
-		crl::on_main(this, [=] { loadNextChunk(); });
-	} else if (_restoreScrollTop >= 0) {
+	if (_restoreScrollTop >= 0) {
 		_scrollToSignal.fire(base::take(_restoreScrollTop));
 		_restoreScrollTop = -1;
 	} else if (first) {
@@ -1063,8 +1043,11 @@ void InnerWidget::stepTo(int direction) {
 	}
 	if (target >= 0) {
 		_scrollToSignal.fire_copy(target);
-	} else if (direction > 0) {
-		loadNextChunk();
+	} else if (direction > 0 && _page + 1 < pageCount() && !_pageLoading) {
+		showPage(_page + 1);
+	} else if (direction < 0 && _page > 0 && !_pageLoading
+		&& _visibleTop <= 2) {
+		showPage(_page - 1);
 	}
 }
 
@@ -1170,11 +1153,23 @@ int InnerWidget::resizeGetHeight(int newWidth) {
 	}
 	_itemsWidth = newWidth;
 	_itemsHeight = newHeight;
+	const auto navShown = _pageNav && !_pageLoading && pageCount() > 1;
+	const auto navHeight = navShown ? _pageNav->height() : 0;
 	_itemsTop =
-		(_minHeight > _itemsHeight + st::historyPaddingBottom)
-			? (_minHeight - _itemsHeight - st::historyPaddingBottom)
+		(_minHeight > _itemsHeight + st::historyPaddingBottom + navHeight)
+			? (_minHeight - _itemsHeight - st::historyPaddingBottom - navHeight)
 			: 0;
-	return _itemsTop + _itemsHeight + st::historyPaddingBottom;
+	if (_pageNav) {
+		_pageNav->setVisible(navShown);
+		if (navShown) {
+			_pageNav->resize(newWidth, _pageNav->height());
+			_pageNav->moveToLeft(
+				0,
+				_itemsTop + _itemsHeight + st::historyPaddingBottom);
+			refreshPageNav();
+		}
+	}
+	return _itemsTop + _itemsHeight + st::historyPaddingBottom + navHeight;
 }
 
 void InnerWidget::restoreScrollPosition() {
