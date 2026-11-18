@@ -358,6 +358,7 @@ private:
 	void updateGeometry(bool inMove = false);
 	void updateGeometryToScreen(bool inMove = false);
 	bool moveToNext(int delta);
+	[[nodiscard]] bool controlsHovered() const;
 	[[nodiscard]] int customIndex() const;
 	[[nodiscard]] bool customIsMedia(not_null<HistoryItem*> item) const;
 	[[nodiscard]] bool customHasMore(int index, int step) const;

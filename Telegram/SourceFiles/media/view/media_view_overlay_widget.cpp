@@ -3287,6 +3287,10 @@ void OverlayWidget::hideControls(bool force) {
 			|| _mousePressed
 			|| _touchMove) {
 			return;
+		} else if (controlsHovered()) {
+			// Stay while the mouse rests on the controls; check again soon.
+			_controlsHideTimer.callOnce(st::mediaviewWaitHide);
+			return;
 		}
 	}
 	if (_fullScreenVideo && _streamed && _streamed->controls) {
@@ -3300,6 +3304,31 @@ void OverlayWidget::hideControls(bool force) {
 	_controlsOpacity.start(0);
 	if (!_stateAnimation.animating()) {
 		_stateAnimation.start();
+	}
+}
+
+bool OverlayWidget::controlsHovered() const {
+	if (_streamed && _streamed->controls && !_streamed->controls->isHidden()) {
+		const auto controls = _streamed->controls.get();
+		if (controls->rect().contains(controls->mapFromGlobal(QCursor::pos()))) {
+			return true;
+		}
+	}
+	switch (_over) {
+	case Over::Header:
+	case Over::Name:
+	case Over::Date:
+	case Over::Save:
+	case Over::Share:
+	case Over::Rotate:
+	case Over::More:
+	case Over::Draw:
+	case Over::Recognize:
+	case Over::OriginalSize:
+	case Over::SponsoredButton:
+		return true;
+	default:
+		return false;
 	}
 }
 
@@ -6108,6 +6137,9 @@ void OverlayWidget::playbackToggleFullScreen() {
 		_streamed->controls->setInFullScreen(_fullScreenVideo);
 	}
 	_touchbarFullscreenToggled.fire_copy(_fullScreenVideo);
+	// Start the hide countdown right away, so the bar doesn't linger
+	// until the next click or mouse move.
+	activateControls();
 	updateControls();
 	update();
 }
@@ -7419,8 +7451,10 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 		}
 	} else if (_streamed) {
 		// Ctrl + F for full screen toggle is in eventFilter().
-		const auto toggleFull = (modifiers.testFlag(Qt::AltModifier) || ctrl)
-			&& (key == Qt::Key_Enter || key == Qt::Key_Return);
+		// Backslash too, on its own.
+		const auto toggleFull = ((modifiers.testFlag(Qt::AltModifier) || ctrl)
+			&& (key == Qt::Key_Enter || key == Qt::Key_Return))
+			|| (key == Qt::Key_Backslash && !ctrl);
 		if (toggleFull) {
 			playbackToggleFullScreen();
 			return;

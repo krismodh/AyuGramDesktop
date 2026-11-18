@@ -682,6 +682,12 @@ void BuildOther(SectionBuilder &builder, AyuSectionBuilder &ayu) {
 		.getter = &AyuSettings::autoRevealSpoilers,
 		.setter = &AyuSettings::setAutoRevealSpoilers,
 	});
+	ayu.addSettingToggle({
+		.id = u"ayu/mergeGifsIntoMedia"_q,
+		.title = tr::ayu_MergeGifsIntoMedia(),
+		.getter = &AyuSettings::mergeGifsIntoMedia,
+		.setter = &AyuSettings::setMergeGifsIntoMedia,
+	});
 }
 
 const auto kMeta = BuildHelper({
