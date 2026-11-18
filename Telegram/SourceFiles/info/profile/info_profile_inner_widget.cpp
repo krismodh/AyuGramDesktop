@@ -309,6 +309,14 @@ object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 			};
 			addSplit(Type::Photo);
 			addSplit(Type::Video);
+			if (AyuSettings::getInstance().mergeGifsIntoMedia()) {
+				tabs.push_back(MakeAllMediaTabDescriptor(rpl::combine(
+					countValue(Type::PhotoVideo),
+					countValue(Type::GIF)
+				) | rpl::map([](int media, int gifs) {
+					return (media + gifs) > 0;
+				})));
+			}
 		};
 		if (_savedMessages) {
 			tabs.push_back(MakeChatsTabDescriptor());

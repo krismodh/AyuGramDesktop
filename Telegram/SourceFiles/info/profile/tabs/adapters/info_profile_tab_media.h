@@ -22,4 +22,8 @@ void SetMediaTabsExpanded(bool expanded);
 	Storage::SharedMediaType type,
 	rpl::producer<bool> shown);
 
+// AyuGram: photos, videos and GIFs together.
+[[nodiscard]] MediaTabDescriptor MakeAllMediaTabDescriptor(
+	rpl::producer<bool> shown);
+
 } // namespace Info::Profile

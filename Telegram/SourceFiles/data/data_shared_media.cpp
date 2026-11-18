@@ -664,9 +664,7 @@ rpl::producer<SparseIdsMergedSlice> SharedMediaMergedWithGifsViewer(
 		int limitBefore,
 		int limitAfter) {
 	using Type = Storage::SharedMediaType;
-	if (key.type != Type::PhotoVideo
-		|| key.mergedKey.migratedPeerId
-		|| !AyuSettings::getInstance().mergeGifsIntoMedia()) {
+	if (key.type != Type::PhotoVideo || key.mergedKey.migratedPeerId) {
 		return SharedMediaMergedViewer(
 			session,
 			std::move(key),

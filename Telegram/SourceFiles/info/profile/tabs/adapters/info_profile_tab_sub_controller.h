@@ -18,13 +18,17 @@ public:
 		not_null<AbstractController*> parent,
 		Storage::SharedMediaType mediaType,
 		PeerData *migrated,
-		bool withSearch);
+		bool withSearch,
+		bool mergeGifs = false);
 	~MediaSubController();
 
 	Key key() const override;
 	PeerData *migrated() const override;
 	::Info::Section section() const override;
 	style::color listBackground() const override;
+	bool mergeGifsWithMedia() const override {
+		return _mergeGifs;
+	}
 
 	rpl::producer<SparseIdsMergedSlice> mediaSource(
 		SparseIdsMergedSlice::UniversalMsgId aroundId,
@@ -44,6 +48,7 @@ private:
 	const Key _key;
 	const ::Info::Section _section;
 	PeerData * const _migrated = nullptr;
+	const bool _mergeGifs = false;
 	std::unique_ptr<Api::DelayedSearchController> _search;
 
 };

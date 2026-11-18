@@ -18,12 +18,14 @@ MediaSubController::MediaSubController(
 	not_null<AbstractController*> parent,
 	Storage::SharedMediaType mediaType,
 	PeerData *migrated,
-	bool withSearch)
+	bool withSearch,
+	bool mergeGifs)
 : AbstractController(parent->parentController())
 , _parent(parent)
 , _key(parent->key())
 , _section(mediaType)
-, _migrated(migrated) {
+, _migrated(migrated)
+, _mergeGifs(mergeGifs) {
 	if (withSearch) {
 		_search = std::make_unique<Api::DelayedSearchController>(
 			&session());

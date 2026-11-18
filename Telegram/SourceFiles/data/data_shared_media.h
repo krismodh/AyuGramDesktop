@@ -64,7 +64,7 @@ rpl::producer<SparseIdsMergedSlice> SharedMediaMergedViewer(
 	int limitBefore,
 	int limitAfter);
 
-// AyuGram: Photos & Videos with GIFs mixed in (when that setting is on);
+// AyuGram: Photos & Videos with GIFs mixed in (the All media tab);
 // any other type is passed straight to SharedMediaMergedViewer.
 rpl::producer<SparseIdsMergedSlice> SharedMediaMergedWithGifsViewer(
 	not_null<Main::Session*> session,

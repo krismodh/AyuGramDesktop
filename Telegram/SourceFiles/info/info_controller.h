@@ -228,6 +228,10 @@ public:
 	[[nodiscard]] virtual PeerData *migrated() const = 0;
 	[[nodiscard]] virtual Section section() const = 0;
 	[[nodiscard]] virtual style::color listBackground() const;
+	// AyuGram: Photos & Videos list with GIFs mixed in (the All media tab).
+	[[nodiscard]] virtual bool mergeGifsWithMedia() const {
+		return false;
+	}
 
 	[[nodiscard]] PeerData *peer() const;
 	[[nodiscard]] PeerId migratedPeerId() const;
