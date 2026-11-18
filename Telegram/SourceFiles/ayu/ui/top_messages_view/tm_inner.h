@@ -230,6 +230,10 @@ private:
 	void updateEmptyText();
 	void paintEmpty(Painter &p, not_null<const Ui::ChatStyle*> st);
 	void loadNextChunk();
+	// Fetches every ranked message (and the rest of each album) in
+	// batches before anything is shown.
+	void prepareAll();
+	void prepareStep(int reqNum);
 	void resetAll();
 	void stepTo(int direction);
 	void addRealMessages(int from, int till);
@@ -274,6 +278,13 @@ private:
 	const std::vector<FullMsgId> _ids;
 	int _loadedCount = 0;
 	bool _loadingChunk = false;
+	bool _prepared = false;
+	bool _preparing = false;
+	int _prepareRound = 0;
+	int _prepareDone = 0;
+	int _prepareTotal = 0;
+	base::flat_set<FullMsgId> _prepareAlbumAsked;
+	base::flat_set<FullMsgId> _prepareAskedThisRound;
 	int _restoreCount = 0;
 	int _restoreScrollTop = -1;
 	const not_null<History*> _history;
