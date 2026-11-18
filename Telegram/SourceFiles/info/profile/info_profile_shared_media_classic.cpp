@@ -352,6 +352,52 @@ object_ptr<Ui::SlideWrap<Ui::RpWidget>> SetupSharedMediaClassic(
 		addPeerGiftsButton(peer, st::infoIconMediaGifts);
 		addSavedSublistButton(peer, st::infoIconMediaSaved);
 	}
+	if (AyuSettings::getInstance().mergeGifsIntoMedia()) {
+		// AyuGram: All media row - photos, videos & GIFs in one grid.
+		const auto topicRootId = topic ? topic->rootId() : MsgId();
+		const auto monoforumPeerId = sublist
+			? sublist->sublistPeer()->id
+			: PeerId();
+		auto count = rpl::combine(
+			SharedMediaCountValue(
+				peer,
+				topicRootId,
+				monoforumPeerId,
+				migrated,
+				MediaType::PhotoVideo),
+			SharedMediaCountValue(
+				peer,
+				topicRootId,
+				monoforumPeerId,
+				migrated,
+				MediaType::GIF)
+		) | rpl::map([](int media, int gifs) {
+			return media + gifs;
+		});
+		const auto button = Media::AddCountedButton(
+			content,
+			std::move(count),
+			[](int count) {
+				return u"All media (%1)"_q.arg(count);
+			},
+			tracker)->entity();
+		const auto navigation = controller;
+		const auto topicPtr = topic;
+		const auto peerPtr = peer;
+		button->addClickHandler([=] {
+			const auto section = Section(
+				MediaType::PhotoVideo,
+				Section::Type::Media,
+				true);
+			navigation->showSection(topicPtr
+				? std::make_shared<Info::Memento>(topicPtr, section)
+				: std::make_shared<Info::Memento>(peerPtr, section));
+		});
+		object_ptr<FloatingIcon>(
+			button,
+			st::infoIconMediaPhoto,
+			st::infoSharedMediaButtonIconPosition);
+	}
 	addMediaButton(MediaType::Photo, st::infoIconMediaPhoto);
 	addMediaButton(MediaType::Video, st::infoIconMediaVideo);
 	addMediaButton(MediaType::File, st::infoIconMediaFile);

@@ -49,6 +49,9 @@ public:
 	[[nodiscard]] Type type() const {
 		return _type;
 	}
+	void setAyuAllMedia(bool value) {
+		_ayuAllMedia = value;
+	}
 
 	// Only for media, not for downloads.
 	void setAroundId(FullMsgId aroundId) {
@@ -98,6 +101,7 @@ private:
 		Type type);
 
 	Type _type = Type::Photo;
+	bool _ayuAllMedia = false;
 	FullMsgId _aroundId;
 	int _idsLimit = 0;
 	int64 _scrollTopItemPosition = 0;

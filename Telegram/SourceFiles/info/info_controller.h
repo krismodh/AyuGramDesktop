@@ -190,9 +190,13 @@ public:
 			&& type != Type::GlobalMedia
 			&& type != Type::Settings);
 	}
-	Section(MediaType mediaType, Type type = Type::Media)
+	Section(
+		MediaType mediaType,
+		Type type = Type::Media,
+		bool ayuAllMedia = false)
 	: _type(type)
-	, _mediaType(mediaType) {
+	, _mediaType(mediaType)
+	, _ayuAllMedia(ayuAllMedia) {
 	}
 	Section(SettingsType settingsType)
 	: _type(Type::Settings)
@@ -212,10 +216,15 @@ public:
 
 		return _settingsType;
 	}
+	// AyuGram: photos, videos & GIFs in one list.
+	[[nodiscard]] bool ayuAllMedia() const {
+		return _ayuAllMedia;
+	}
 
 private:
 	Type _type;
 	MediaType _mediaType = MediaType();
+	bool _ayuAllMedia = false;
 	SettingsType _settingsType = SettingsType();
 
 };
@@ -331,6 +340,10 @@ public:
 	}
 	PeerData *migrated() const override {
 		return _migrated;
+	}
+	bool mergeGifsWithMedia() const override {
+		return (_section.type() == Section::Type::Media)
+			&& _section.ayuAllMedia();
 	}
 	Section section() const override {
 		return _section;

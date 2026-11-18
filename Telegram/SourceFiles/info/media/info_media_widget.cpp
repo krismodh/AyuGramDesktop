@@ -90,6 +90,9 @@ Memento::Memento(not_null<Controller*> controller)
 		: controller->section().type() == Section::Type::SavedMusic
 		? Type::MusicFile
 		: controller->section().mediaType())) {
+	if (controller->section().type() == Section::Type::Media) {
+		_ayuAllMedia = controller->section().ayuAllMedia();
+	}
 }
 
 Memento::Memento(not_null<PeerData*> peer, PeerId migratedPeerId, Type type)
@@ -125,7 +128,7 @@ Memento::Memento(
 }
 
 Section Memento::section() const {
-	return Section(_type);
+	return Section(_type, Section::Type::Media, _ayuAllMedia);
 }
 
 object_ptr<ContentWidget> Memento::createWidget(
@@ -215,6 +218,9 @@ bool Widget::processZoomKey(not_null<QKeyEvent*> e) {
 rpl::producer<QString> Widget::title() {
 	if (controller()->key().peer()->sharedMediaInfo() && isStackBottom()) {
 		return tr::lng_profile_shared_media();
+	}
+	if (controller()->section().ayuAllMedia()) {
+		return rpl::single(u"All media"_q);
 	}
 	return SharedMediaTitle(controller()->section().mediaType())();
 }
