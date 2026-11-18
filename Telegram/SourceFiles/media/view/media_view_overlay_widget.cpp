@@ -4644,6 +4644,7 @@ void SetNextOpenCustomOrder(std::vector<FullMsgId> ids) {
 void OverlayWidget::show(OpenRequest request) {
 	_customOrder = base::take(PendingCustomOrder());
 	_customLoading = false;
+	_customAlbumsRequested.clear();
 	const auto story = request.story();
 	const auto document = story ? story->document() : request.document();
 	const auto photo = story ? story->photo() : request.photo();
@@ -8105,9 +8106,102 @@ int OverlayWidget::customIndex() const {
 	}
 	const auto id = _message->fullId();
 	const auto i = ranges::find(_customOrder, id);
-	return (i == end(_customOrder))
-		? -1
-		: int(i - begin(_customOrder));
+	if (i != end(_customOrder)) {
+		return int(i - begin(_customOrder));
+	}
+	// Another photo / video of an album whose entry is a different member.
+	for (const auto &member : customAlbumOf(_message)) {
+		const auto j = ranges::find(_customOrder, member->fullId());
+		if (j != end(_customOrder)) {
+			return int(j - begin(_customOrder));
+		}
+	}
+	return -1;
+}
+
+std::vector<not_null<HistoryItem*>> OverlayWidget::customAlbumOf(
+		not_null<HistoryItem*> item) const {
+	auto result = std::vector<not_null<HistoryItem*>>();
+	if (!_session || !item->groupId()) {
+		return result;
+	}
+	if (const auto group = _session->data().groups().find(item)) {
+		for (const auto &member : group->items) {
+			if (customIsMedia(member)) {
+				result.push_back(member);
+			}
+		}
+		ranges::sort(result, ranges::less(), [](not_null<HistoryItem*> i) {
+			return i->id;
+		});
+	}
+	return result;
+}
+
+HistoryItem *OverlayWidget::customAlbumStep(int step) const {
+	if (!_message) {
+		return nullptr;
+	}
+	const auto album = customAlbumOf(_message);
+	const auto i = ranges::find(album, not_null<HistoryItem*>(_message));
+	if (i == end(album)) {
+		return nullptr;
+	}
+	const auto index = int(i - begin(album)) + step;
+	return (index >= 0 && index < int(album.size()))
+		? album[index].get()
+		: nullptr;
+}
+
+bool OverlayWidget::customShowItem(not_null<HistoryItem*> item) {
+	const auto media = item->media();
+	if (!media) {
+		return false;
+	}
+	auto entity = Entity();
+	if (const auto photo = media->photo()) {
+		entity.data = not_null<PhotoData*>(photo);
+	} else if (const auto document = media->document()) {
+		entity.data = not_null<DocumentData*>(document);
+	} else {
+		return false;
+	}
+	entity.item = item;
+	entity.topicRootId = item->topicRootId();
+	const auto result = moveToEntity(entity, 0);
+	customLoadAlbum(item);
+	return result;
+}
+
+void OverlayWidget::customLoadAlbum(not_null<HistoryItem*> item) {
+	// Album members are consecutive ids (max 10); fetch any not loaded so
+	// the whole album can be stepped through.
+	const auto groupId = item->groupId();
+	if (!_session || !groupId || _customAlbumsRequested.contains(groupId)) {
+		return;
+	}
+	_customAlbumsRequested.emplace(groupId);
+	auto &owner = _session->data();
+	const auto peer = item->history()->peer;
+	auto ids = std::vector<MsgId>();
+	for (auto d = -9; d <= 9; ++d) {
+		const auto id = item->id + d;
+		if (d && id > 0 && !owner.message(peer->id, id)) {
+			ids.push_back(id);
+		}
+	}
+	if (ids.empty()) {
+		return;
+	}
+	const auto left = std::make_shared<int>(int(ids.size()));
+	for (const auto id : ids) {
+		_session->api().requestMessageData(peer, id, crl::guard(_widget, [=] {
+			if (--*left == 0) {
+				refreshNavVisibility();
+				updateControls();
+			}
+		}));
+	}
 }
 
 bool OverlayWidget::customIsMedia(not_null<HistoryItem*> item) const {
@@ -8129,6 +8223,8 @@ bool OverlayWidget::customIsMedia(not_null<HistoryItem*> item) const {
 bool OverlayWidget::customHasMore(int index, int step) const {
 	if (!_session) {
 		return false;
+	} else if (customAlbumStep(step)) {
+		return true;
 	}
 	auto &owner = _session->data();
 	for (auto i = index + step; i >= 0 && i < int(_customOrder.size()); i += step) {
@@ -8177,6 +8273,9 @@ bool OverlayWidget::customMoveToNext(int delta) {
 	}
 	auto &owner = _session->data();
 	const auto step = (delta < 0) ? -1 : 1;
+	if (const auto next = customAlbumStep(step)) {
+		return customShowItem(next);
+	}
 	for (auto i = index + step; i >= 0 && i < int(_customOrder.size()); i += step) {
 		const auto item = owner.message(_customOrder[i]);
 		if (!item) {
@@ -8192,19 +8291,17 @@ bool OverlayWidget::customMoveToNext(int delta) {
 				}));
 			}
 			return true;
-		} else if (!customIsMedia(item)) {
+		}
+		// Albums: enter at the first photo / video going forward, the last
+		// going back.
+		const auto album = customAlbumOf(item);
+		const auto target = album.empty()
+			? item
+			: (step > 0 ? album.front() : album.back()).get();
+		if (!customIsMedia(target)) {
 			continue;
 		}
-		const auto media = item->media();
-		auto entity = Entity();
-		if (const auto photo = media->photo()) {
-			entity.data = not_null<PhotoData*>(photo);
-		} else {
-			entity.data = not_null<DocumentData*>(media->document());
-		}
-		entity.item = item;
-		entity.topicRootId = item->topicRootId();
-		const auto result = moveToEntity(entity, 0);
+		const auto result = customShowItem(target);
 		// Keep a few ahead loaded so stepping stays quick.
 		customRequest(i + step, step, nullptr);
 		return result;

@@ -363,6 +363,13 @@ private:
 	[[nodiscard]] bool customIsMedia(not_null<HistoryItem*> item) const;
 	[[nodiscard]] bool customHasMore(int index, int step) const;
 	bool customMoveToNext(int delta);
+	// Album handling for the custom order: one entry per post, but every
+	// photo / video of an album is stepped through.
+	[[nodiscard]] std::vector<not_null<HistoryItem*>> customAlbumOf(
+		not_null<HistoryItem*> item) const;
+	[[nodiscard]] HistoryItem *customAlbumStep(int step) const;
+	bool customShowItem(not_null<HistoryItem*> item);
+	void customLoadAlbum(not_null<HistoryItem*> item);
 	void customRequest(int from, int step, Fn<void()> done);
 	void preloadData(int delta);
 
@@ -652,6 +659,7 @@ private:
 	const not_null<QWidget*> _widget;
 	std::vector<FullMsgId> _customOrder;
 	bool _customLoading = false;
+	base::flat_set<MessageGroupId> _customAlbumsRequested;
 	QRect _normalGeometry;
 	bool _wasWindowedMode = false;
 	bool _fullscreenInited = false;
