@@ -31,6 +31,7 @@
 #include "data/data_photo.h"
 #include "data/data_photo_media.h"
 #include "data/data_forum.h"
+#include "data/data_groups.h"
 #include "data/data_forum_topic.h"
 #include "data/data_session.h"
 #include "data/data_user.h"
@@ -768,8 +769,50 @@ void InnerWidget::loadNextChunk() {
 			return;
 		}
 		*finished = true;
-		_loadingChunk = false;
-		addRealMessages(from, till);
+		// Albums: the ranked id is one photo, so fetch the rest of each
+		// album (consecutive ids, at most 10) before showing the chunk.
+		auto &owner = session().data();
+		auto seen = base::flat_set<MessageGroupId>();
+		auto missing = std::vector<FullMsgId>();
+		for (auto i = from; i != till; ++i) {
+			const auto item = owner.message(_ids[i]);
+			if (!item || !item->groupId() || seen.contains(item->groupId())) {
+				continue;
+			}
+			seen.emplace(item->groupId());
+			for (auto d = -9; d <= 9; ++d) {
+				const auto id = item->id + d;
+				if (d && id > 0 && !owner.message(item->history()->peer->id, id)) {
+					missing.push_back({ item->history()->peer->id, id });
+				}
+			}
+		}
+		if (missing.empty()) {
+			_loadingChunk = false;
+			addRealMessages(from, till);
+			return;
+		}
+		const auto albumLeft = std::make_shared<int>(int(missing.size()));
+		const auto albumDone = std::make_shared<bool>(false);
+		const auto show = [=] {
+			if (!weak || *albumDone || reqNum != _loadRequestNum) {
+				return;
+			}
+			*albumDone = true;
+			_loadingChunk = false;
+			addRealMessages(from, till);
+		};
+		for (const auto &id : missing) {
+			session().api().requestMessageData(
+				owner.peer(id.peer),
+				id.msg,
+				[=] {
+					if (--*albumLeft <= 0) {
+						show();
+					}
+				});
+		}
+		base::call_delayed(10000, this, show);
 	};
 
 	auto &owner = session().data();
@@ -812,7 +855,13 @@ void InnerWidget::addRealMessages(int from, int till) {
 	auto &owner = session().data();
 	auto added = std::vector<OwnedItem>();
 	for (auto i = till - 1; i >= from; --i) {
-		const auto item = owner.message(_ids[i]);
+		auto item = owner.message(_ids[i]);
+		if (item) {
+			// An album is drawn by its first item; the others are hidden.
+			if (const auto group = owner.groups().find(item)) {
+				item = group->items.front();
+			}
+		}
 		if (!item || _itemsByData.find(item) != end(_itemsByData)) {
 			continue;
 		}
