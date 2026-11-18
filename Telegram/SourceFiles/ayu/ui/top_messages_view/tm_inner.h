@@ -34,6 +34,8 @@ enum class PointState : char;
 
 namespace Ui {
 class PopupMenu;
+class RoundButton;
+class FlatLabel;
 class ChatStyle;
 struct PeerUserpicView;
 } // namespace Ui
@@ -232,8 +234,11 @@ private:
 	void loadNextChunk();
 	// Fetches every ranked message (and the rest of each album) in
 	// batches before anything is shown.
-	void prepareAll();
-	void prepareSegment(int reqNum, int from);
+	static constexpr auto kPageSize = 100;
+	[[nodiscard]] int pageCount() const;
+	void showPage(int page);
+	void setupPageNav();
+	void refreshPageNav();
 	void fetchMessages(
 		std::vector<FullMsgId> ids,
 		int reqNum,
@@ -282,12 +287,14 @@ private:
 	const std::vector<FullMsgId> _ids;
 	int _loadedCount = 0;
 	bool _loadingChunk = false;
-	bool _prepared = false;
-	bool _preparing = false;
-	int _preparedUpTo = 0;
-	bool _waitingForPrepare = false;
-	int _prepareDone = 0;
-	int _prepareTotal = 0;
+	int _page = 0;
+	bool _pageLoading = false;
+	Ui::RpWidget *_pageNav = nullptr;
+	Ui::FlatLabel *_pageNavLabel = nullptr;
+	Ui::RoundButton *_pageFirst = nullptr;
+	Ui::RoundButton *_pagePrev = nullptr;
+	Ui::RoundButton *_pageNext = nullptr;
+	Ui::RoundButton *_pageLast = nullptr;
 	int _restoreCount = 0;
 	int _restoreScrollTop = -1;
 	const not_null<History*> _history;

@@ -420,6 +420,7 @@ struct NavItem {
 	MsgId id = 0;
 	MsgId topicRoot = 0;
 	int metric = 0;
+	bool media = false;
 };
 
 // Floating "3 of 250  ^ v" bar at the bottom of the chat, like in-chat search.
@@ -883,6 +884,7 @@ void TopMessagesBox(
 				entry->id,
 				entry->topicRoot,
 				Metric(*entry, sort),
+				entry->media,
 			});
 		}
 		const auto pages = std::max((total + kShownLimit - 1) / kShownLimit, 1);
@@ -919,16 +921,19 @@ void TopMessagesBox(
 			const auto pageFirst = first;
 			Settings::AddButtonWithLabel(
 				results,
-				rpl::single(u"Open as a chat, most first"_q),
+				rpl::single(u"Open media as a chat, most first"_q),
 				rpl::single(u"from #"_q + FormatNumber(first + 1)),
 				st::settingsButtonNoIcon
 			)->addClickHandler([=] {
 				crl::on_main(box, [=] {
 					auto ids = std::vector<FullMsgId>();
-					// Everything from this page on; the view loads 100
-					// at a time as you scroll.
+					// Media posts only, from this page on; the view shows
+					// them 100 per page.
 					for (auto i = pageFirst; i < int(navItems->size()); ++i) {
-						ids.push_back(FullMsgId(peer->id, (*navItems)[i].id));
+						if ((*navItems)[i].media) {
+							ids.push_back(
+								FullMsgId(peer->id, (*navItems)[i].id));
+						}
 					}
 					if (ids.empty()) {
 						return;
