@@ -91,9 +91,13 @@ base::options::toggle MediaTabsExpandedOption({
 
 class MediaTabAdapter final : public MediaTabContent {
 public:
-	MediaTabAdapter(MediaTabContext context, SharedMediaType type)
+	MediaTabAdapter(
+		MediaTabContext context,
+		SharedMediaType type,
+		bool mergeGifs = false)
 	: _context(context)
 	, _type(type)
+	, _mergeGifs(mergeGifs)
 	, _countPeer(context.sublist
 		? context.sublist->sublistPeer()
 		: context.peer)
@@ -105,7 +109,8 @@ public:
 		context.controller,
 		type,
 		context.migrated,
-		MediaTabSearchable(type))
+		MediaTabSearchable(type) && !mergeGifs,
+		mergeGifs)
 	, _host(context.parent) {
 		const auto host = _host.data();
 		_list = Ui::CreateChild<Media::ListWidget>(host, &_subController);
@@ -157,20 +162,41 @@ public:
 	}
 	TabTopBarBindings topBarBindings() override {
 		return {
-			.title = MediaTabTitle(_type) | rpl::map([](const QString &text) {
+			.title = (_mergeGifs
+				? rpl::producer<QString>(rpl::single(u"All media"_q))
+				: MediaTabTitle(_type)) | rpl::map([](const QString &text) {
 				return TextWithEntities{ text };
 			}),
-			.subtitle = SharedMediaCountValue(
-				_countPeer,
-				_topicRootId,
-				_monoforumPeerId,
-				_context.migrated,
-				_type
-			) | rpl::map([phrase = Media::MediaTextPhrase(_type)](int count) {
-				return TextWithEntities{ (count > 0)
-					? phrase(tr::now, lt_count, count)
-					: QString() };
-			}),
+			.subtitle = (_mergeGifs
+				? rpl::combine(
+					SharedMediaCountValue(
+						_countPeer,
+						_topicRootId,
+						_monoforumPeerId,
+						_context.migrated,
+						SharedMediaType::PhotoVideo),
+					SharedMediaCountValue(
+						_countPeer,
+						_topicRootId,
+						_monoforumPeerId,
+						_context.migrated,
+						SharedMediaType::GIF)
+				) | rpl::map([](int media, int gifs) {
+					return TextWithEntities{ (media + gifs > 0)
+						? QString::number(media + gifs) + u" items"_q
+						: QString() };
+				}) | rpl::type_erased
+				: SharedMediaCountValue(
+					_countPeer,
+					_topicRootId,
+					_monoforumPeerId,
+					_context.migrated,
+					_type
+				) | rpl::map([phrase = Media::MediaTextPhrase(_type)](int count) {
+					return TextWithEntities{ (count > 0)
+						? phrase(tr::now, lt_count, count)
+						: QString() };
+				}) | rpl::type_erased),
 			.fillMenu = (MediaTabGrid(_type)
 				? Fn<void(const Ui::Menu::MenuCallback&)>(crl::guard(
 					base::make_weak(_list),
@@ -282,6 +308,7 @@ private:
 
 	const MediaTabContext _context;
 	const SharedMediaType _type;
+	const bool _mergeGifs = false;
 	const not_null<PeerData*> _countPeer;
 	const MsgId _topicRootId;
 	const PeerId _monoforumPeerId;
@@ -330,6 +357,23 @@ MediaTabDescriptor MakeMediaTabDescriptor(
 				type);
 		},
 		.profileTab = MediaProfileTab(type),
+	};
+}
+
+MediaTabDescriptor MakeAllMediaTabDescriptor(rpl::producer<bool> shown) {
+	// Separate tab: photos, videos and GIFs in one grid. No shared media
+	// type, so the Media tab's split / merge handling leaves it alone.
+	return {
+		.id = u"media:all"_q,
+		.title = rpl::single(u"All media"_q) | rpl::map(Ui::Text::WithEntities),
+		.shown = std::move(shown),
+		.factory = [](MediaTabContext context) {
+			return std::make_unique<MediaTabAdapter>(
+				std::move(context),
+				SharedMediaType::PhotoVideo,
+				true);
+		},
+		.profileTab = Data::ProfileTab::None,
 	};
 }
 

@@ -256,7 +256,9 @@ rpl::producer<SparseIdsMergedSlice> AbstractController::mediaSource(
 
 	const auto mediaViewer = isScheduled
 		? SharedScheduledMediaViewer
-		: SharedMediaMergedWithGifsViewer;
+		: mergeGifsWithMedia()
+		? SharedMediaMergedWithGifsViewer
+		: SharedMediaMergedViewer;
 	const auto topicId = isScheduled
 		? SparseIdsMergedSlice::kScheduledTopicId
 		: topic()
@@ -578,7 +580,7 @@ rpl::producer<SparseIdsMergedSlice> Controller::mediaSource(
 			limitAfter);
 	}
 
-	return SharedMediaMergedWithGifsViewer(
+	return SharedMediaMergedViewer(
 		&session(),
 		SharedMediaMergedKey(
 			SparseIdsMergedSlice::Key(

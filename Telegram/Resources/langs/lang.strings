@@ -8842,7 +8842,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 "ayu_KeepAliveServiceNote" = "We recommend migrating to **FCM** version.";
 "ayu_DisableAds" = "Disable Ads";
 "ayu_AutoRevealSpoilers" = "Show spoiler media unblurred";
-"ayu_MergeGifsIntoMedia" = "Show GIFs in Photos & Videos";
+"ayu_MergeGifsIntoMedia" = "Show All media tab (photos, videos & GIFs)";
 "ayu_DisableStories" = "Disable Stories";
 "ayu_DisableOpenLinkWarning" = "Disable Open Link Warning";
 "ayu_DisableCustomBackgrounds" = "Disable Custom Backgrounds";
