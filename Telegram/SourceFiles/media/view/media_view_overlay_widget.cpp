@@ -7525,6 +7525,21 @@ void OverlayWidget::handleKeyPress(not_null<QKeyEvent*> e) {
 				&& !ctrl
 				&& !_stories) {
 				forwardToSavedMessages();
+			} else if (key == Qt::Key_Slash && !ctrl && !_stories) {
+				// AyuGram: rotate works in fullscreen too.
+				playbackControlsRotate();
+			} else if ((key == Qt::Key_H || key == Qt::Key_V)
+				&& !ctrl
+				&& !_stories) {
+				const auto dir = (key == Qt::Key_H)
+					? Qt::Horizontal
+					: Qt::Vertical;
+				if (_flip & dir) {
+					_flip &= ~dir;
+				} else {
+					_flip |= dir;
+				}
+				update();
 			} else if (ctrl) {
 			} else if (key == Qt::Key_0) {
 				activateControls();
