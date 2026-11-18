@@ -23,6 +23,7 @@
 #include "core/click_handler_types.h"
 #include "core/file_utilities.h"
 #include "crl/crl_async.h"
+#include "data/data_channel.h"
 #include "data/data_cloud_file.h"
 #include "data/data_document.h"
 #include "data/data_file_click_handler.h"
@@ -469,7 +470,7 @@ void InnerWidget::checkPreloadMore() {
 }
 
 void InnerWidget::updateEmptyText() {
-	if (_preparing) {
+	if (_preparing && _items.empty()) {
 		_emptyText.setMarkedText(
 			st::defaultTextStyle,
 			Ui::Text::Semibold(u"Preparing messages\u2026 %1 / %2"_q
@@ -672,6 +673,7 @@ void InnerWidget::resetAll() {
 	++_loadRequestNum;
 	_loadingChunk = false;
 	_preparing = false;
+	_waitingForPrepare = false;
 	_loadedCount = 0;
 	_visibleTopItem = nullptr;
 	_scrollDateLastItem = nullptr;
@@ -764,97 +766,146 @@ void InnerWidget::prepareAll() {
 		return;
 	}
 	_preparing = true;
-	_prepareRound = 0;
-	_prepareAskedThisRound.clear();
+	_preparedUpTo = 0;
 	_prepareDone = 0;
 	_prepareTotal = int(_ids.size());
 	_upLoaded = _downLoaded = true; // So the progress text is painted.
 	updateEmptyText();
 	update();
-	prepareStep(_loadRequestNum);
+	prepareSegment(_loadRequestNum, 0);
 }
 
-void InnerWidget::prepareStep(int reqNum) {
+void InnerWidget::fetchMessages(
+		std::vector<FullMsgId> ids,
+		int reqNum,
+		Fn<void()> done) {
+	// Straight channels.getMessages / messages.getMessages, 100 ids per
+	// request, all sent at once (the shared queue sends one huge request
+	// that Telegram refuses).
+	constexpr auto kPerRequest = 100;
+	auto &owner = session().data();
+	ranges::sort(ids);
+	ids.erase(ranges::unique(ids), ids.end());
+	ids.erase(ranges::remove_if(ids, [&](const FullMsgId &id) {
+		return owner.message(id) != nullptr;
+	}), ids.end());
+	if (ids.empty()) {
+		done();
+		return;
+	}
+	auto groups = std::vector<std::pair<PeerId, QVector<MTPInputMessage>>>();
+	for (const auto &id : ids) {
+		if (groups.empty()
+			|| groups.back().first != id.peer
+			|| groups.back().second.size() >= kPerRequest) {
+			groups.push_back({ id.peer, {} });
+		}
+		groups.back().second.push_back(MTP_inputMessageID(MTP_int(int(id.msg.bare))));
+	}
+	const auto weak = base::make_weak(this);
+	const auto left = std::make_shared<int>(int(groups.size()));
+	const auto one = [=] {
+		if (weak && reqNum == _loadRequestNum && --*left == 0) {
+			done();
+		}
+	};
+	for (auto &[peerId, list] : groups) {
+		const auto peer = owner.peer(peerId);
+		if (const auto channel = peer->asChannel()) {
+			_api.request(MTPchannels_GetMessages(
+				channel->inputChannel(),
+				MTP_vector<MTPInputMessage>(list)
+			)).done([=](const MTPmessages_Messages &result) {
+				if (weak) {
+					session().data().processExistingMessages(channel, result);
+				}
+				one();
+			}).fail([=] {
+				one();
+			}).send();
+		} else {
+			_api.request(MTPmessages_GetMessages(
+				MTP_vector<MTPInputMessage>(list)
+			)).done([=](const MTPmessages_Messages &result) {
+				if (weak) {
+					session().data().processExistingMessages(nullptr, result);
+				}
+				one();
+			}).fail([=] {
+				one();
+			}).send();
+		}
+	}
+}
+
+void InnerWidget::prepareSegment(int reqNum, int from) {
+	// 100 ranked posts at a time: the posts, then the rest of their
+	// albums. The chat shows as soon as the first segment is ready and
+	// the rest keeps preparing ahead of scrolling.
+	constexpr auto kSegment = 100;
 	if (reqNum != _loadRequestNum) {
 		return;
 	}
-	// Telegram answers at most 100 ids per request, so ask in batches and
-	// wait for each before the next.
-	constexpr auto kBatch = 90;
-	constexpr auto kRounds = 3;
-	auto &owner = session().data();
-	auto batch = std::vector<FullMsgId>();
-	auto loaded = 0;
-	for (const auto &id : _ids) {
-		if (const auto item = owner.message(id)) {
-			++loaded;
-			if (!item->groupId()) {
-				continue;
-			}
-			// Rest of the album: consecutive ids, at most 10.
-			const auto peerId = item->history()->peer->id;
-			for (auto d = -9; d <= 9 && int(batch.size()) < kBatch; ++d) {
-				const auto msg = item->id + d;
-				const auto full = FullMsgId(peerId, msg);
-				if (d && msg > 0
-					&& !owner.message(full)
-					&& !_prepareAlbumAsked.contains(full)) {
-					_prepareAlbumAsked.emplace(full);
-					batch.push_back(full);
-				}
-			}
-		} else if (int(batch.size()) < kBatch
-			&& !_prepareAskedThisRound.contains(id)) {
-			_prepareAskedThisRound.emplace(id);
-			batch.push_back(id);
-		}
-	}
-	_prepareDone = loaded;
-	updateEmptyText();
-	update();
-	if (batch.empty()) {
-		if (_prepareRound + 1 < kRounds && loaded < int(_ids.size())) {
-			// Some never answered: one more pass for just those.
-			++_prepareRound;
-			_prepareAskedThisRound.clear();
-			crl::on_main(this, [=] { prepareStep(reqNum); });
-			return;
-		}
+	const auto till = std::min(from + kSegment, int(_ids.size()));
+	if (from >= till) {
 		_preparing = false;
 		_prepared = true;
-		_downLoaded = _ids.empty();
+		_preparedUpTo = int(_ids.size());
 		updateEmptyText();
 		loadNextChunk();
 		return;
 	}
-	const auto weak = base::make_weak(this);
-	const auto left = std::make_shared<int>(int(batch.size()));
-	const auto done = std::make_shared<bool>(false);
-	const auto next = [=] {
-		if (!weak || *done) {
-			return;
-		}
-		*done = true;
-		prepareStep(reqNum);
-	};
-	for (const auto &id : batch) {
-		session().api().requestMessageData(
-			owner.peer(id.peer),
-			id.msg,
-			[=] {
-				if (--*left <= 0) {
-					next();
+	auto primaries = std::vector<FullMsgId>(
+		_ids.begin() + from,
+		_ids.begin() + till);
+	fetchMessages(std::move(primaries), reqNum, crl::guard(this, [=] {
+		auto &owner = session().data();
+		auto albums = std::vector<FullMsgId>();
+		auto seen = base::flat_set<MessageGroupId>();
+		for (auto i = from; i != till; ++i) {
+			const auto item = owner.message(_ids[i]);
+			if (!item || !item->groupId() || seen.contains(item->groupId())) {
+				continue;
+			}
+			seen.emplace(item->groupId());
+			// Album members are consecutive ids, at most 10.
+			const auto peerId = item->history()->peer->id;
+			for (auto d = -9; d <= 9; ++d) {
+				const auto msg = item->id + d;
+				if (d && msg > 0) {
+					albums.push_back(FullMsgId(peerId, msg));
 				}
-			});
-	}
-	base::call_delayed(20000, this, next);
+			}
+		}
+		fetchMessages(std::move(albums), reqNum, crl::guard(this, [=] {
+			_preparedUpTo = till;
+			for (auto i = from; i != till; ++i) {
+				if (session().data().message(_ids[i])) {
+					++_prepareDone;
+				}
+			}
+			if (_items.empty()) {
+				updateEmptyText();
+				update();
+			}
+			if (_waitingForPrepare) {
+				_waitingForPrepare = false;
+				loadNextChunk();
+			}
+			prepareSegment(reqNum, till);
+		}));
+	}));
 }
 
 void InnerWidget::loadNextChunk() {
 	constexpr auto kChunk = 100;
 	if (!_prepared) {
 		prepareAll();
-		return;
+		const auto wanted = std::min(_loadedCount + kChunk, int(_ids.size()));
+		if (_loadingChunk || _preparedUpTo < wanted) {
+			_waitingForPrepare = true;
+			return;
+		}
 	}
 	if (_loadingChunk || _loadedCount >= int(_ids.size())) {
 		_downLoaded = (_loadedCount >= int(_ids.size()));
@@ -878,7 +929,7 @@ void InnerWidget::loadNextChunk() {
 		auto &owner = session().data();
 		auto seen = base::flat_set<MessageGroupId>();
 		auto missing = std::vector<FullMsgId>();
-		for (auto i = from; i != (_prepared ? from : till); ++i) {
+		for (auto i = from; i != (till <= _preparedUpTo ? from : till); ++i) {
 			const auto item = owner.message(_ids[i]);
 			if (!item || !item->groupId() || seen.contains(item->groupId())) {
 				continue;

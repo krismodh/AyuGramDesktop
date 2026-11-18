@@ -233,7 +233,11 @@ private:
 	// Fetches every ranked message (and the rest of each album) in
 	// batches before anything is shown.
 	void prepareAll();
-	void prepareStep(int reqNum);
+	void prepareSegment(int reqNum, int from);
+	void fetchMessages(
+		std::vector<FullMsgId> ids,
+		int reqNum,
+		Fn<void()> done);
 	void resetAll();
 	void stepTo(int direction);
 	void addRealMessages(int from, int till);
@@ -280,11 +284,10 @@ private:
 	bool _loadingChunk = false;
 	bool _prepared = false;
 	bool _preparing = false;
-	int _prepareRound = 0;
+	int _preparedUpTo = 0;
+	bool _waitingForPrepare = false;
 	int _prepareDone = 0;
 	int _prepareTotal = 0;
-	base::flat_set<FullMsgId> _prepareAlbumAsked;
-	base::flat_set<FullMsgId> _prepareAskedThisRound;
 	int _restoreCount = 0;
 	int _restoreScrollTop = -1;
 	const not_null<History*> _history;
