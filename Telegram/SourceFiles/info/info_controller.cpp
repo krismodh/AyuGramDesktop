@@ -580,7 +580,9 @@ rpl::producer<SparseIdsMergedSlice> Controller::mediaSource(
 			limitAfter);
 	}
 
-	return SharedMediaMergedViewer(
+	return (mergeGifsWithMedia()
+		? SharedMediaMergedWithGifsViewer
+		: SharedMediaMergedViewer)(
 		&session(),
 		SharedMediaMergedKey(
 			SparseIdsMergedSlice::Key(

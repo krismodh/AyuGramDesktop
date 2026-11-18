@@ -226,10 +226,14 @@ std::shared_ptr<ContentMemento> Memento::DefaultContent(
 				peer,
 				migratedPeerId);
 		}
-		return std::make_shared<Media::Memento>(
+		{
+			auto result = std::make_shared<Media::Memento>(
 			peer,
 			migratedPeerId,
 			section.mediaType());
+			result->setAyuAllMedia(section.ayuAllMedia());
+			return result;
+		}
 	case Section::Type::GlobalMedia:
 		return std::make_shared<GlobalMedia::Memento>(
 			peer->asUser(),
@@ -267,7 +271,11 @@ std::shared_ptr<ContentMemento> Memento::DefaultContent(
 		if (section.mediaType() == Storage::SharedMediaType::Poll) {
 			return std::make_shared<Polls::ListMemento>(topic);
 		}
-		return std::make_shared<Media::Memento>(topic, section.mediaType());
+		{
+			auto result = std::make_shared<Media::Memento>(topic, section.mediaType());
+			result->setAyuAllMedia(section.ayuAllMedia());
+			return result;
+		}
 	case Section::Type::Members:
 		return std::make_shared<Members::Memento>(peer, migratedPeerId);
 	}
@@ -284,9 +292,13 @@ std::shared_ptr<ContentMemento> Memento::DefaultContent(
 		if (section.mediaType() == Storage::SharedMediaType::Poll) {
 			return std::make_shared<Polls::ListMemento>(sublist);
 		}
-		return std::make_shared<Media::Memento>(
+		{
+			auto result = std::make_shared<Media::Memento>(
 			sublist,
 			section.mediaType());
+			result->setAyuAllMedia(section.ayuAllMedia());
+			return result;
+		}
 	}
 	Unexpected("Wrong section type in Info::Memento::DefaultContent()");
 }
