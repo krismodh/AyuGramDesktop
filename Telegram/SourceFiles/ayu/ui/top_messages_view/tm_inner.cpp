@@ -898,7 +898,7 @@ void InnerWidget::setupPageNav() {
 			_pageNav,
 			rpl::single(text),
 			st::defaultLightButton);
-		button->setTextTransform(Ui::RoundButton::TextTransform::NoTransform);
+		button->setTextTransform(Ui::RoundButtonTextTransform::NoTransform);
 		button->setClickedCallback(crl::guard(this, [=] {
 			const auto page = target();
 			if (page != _page && !_pageLoading) {
